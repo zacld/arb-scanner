@@ -82,6 +82,7 @@ class PriceRunnerClient:
 
     market_name = "pricerunner"
     default_min_listings = 1  # aggregated product rows, not individual listings
+    resale_market = False  # prices are retailer asks, not resale values
 
     def __init__(self, session: PoliteSession | None = None):
         self.session = session or PoliteSession()

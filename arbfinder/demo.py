@@ -56,6 +56,7 @@ class DemoPriceRunnerClient:
 
     market_name = "pricerunner"
     default_min_listings = 1
+    resale_market = False
 
     def __init__(self, data: dict | None = None):
         if data is None:

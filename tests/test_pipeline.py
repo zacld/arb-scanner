@@ -41,9 +41,10 @@ def test_demo_pipeline_end_to_end(tmp_path):
     assert rows[0]["product_name"] == ordered[0].product.name
     assert float(rows[0]["diff_gbp"]) == round(ordered[0].diff_abs, 2)
 
-    # Console table renders every row.
+    # Console table renders every row (+ header, separator and fees footnote).
     table = format_table(ordered)
-    assert table.count("\n") == len(comparisons) + 1
+    assert table.count("\n") == len(comparisons) + 2
+    assert all(c.product.name[:40] in table for c in ordered)
 
 
 def test_min_diff_pct_semantics():

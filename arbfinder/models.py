@@ -45,6 +45,10 @@ class Comparison:
     n_listings: int
     matched_by: str  # "ean" or "title"
     listings: list[ComparableListing] = field(default_factory=list)
+    # True when market_price is a resale value (eBay listings); False for
+    # retail aggregators (PriceRunner), whose prices are asks you'd buy at,
+    # not amounts you could sell for — so net profit is meaningless there.
+    resale_market: bool = True
 
     @property
     def diff_abs(self) -> float:
@@ -56,3 +60,12 @@ class Comparison:
         if self.product.price <= 0:
             return 0.0
         return self.diff_abs / self.product.price * 100.0
+
+    def net_profit(self, fees_pct: float, postage: float) -> float | None:
+        """Estimated profit after selling fees and postage; None for
+        retail-comparison rows where there is no resale price to net against."""
+        if not self.resale_market:
+            return None
+        return self.market_price - self.product.price - (
+            self.market_price * fees_pct / 100.0
+        ) - postage

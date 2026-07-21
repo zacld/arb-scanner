@@ -19,21 +19,29 @@ from .report import format_table, sort_comparisons, write_csv
 
 
 def _output(comparisons, args, out_path=None) -> None:
-    comparisons = sort_comparisons(comparisons, by=args.sort)
+    comparisons = sort_comparisons(
+        comparisons, by=args.sort, fees_pct=args.fees, postage=args.postage
+    )
     if args.min_diff_pct is not None:
         comparisons = [c for c in comparisons if c.diff_pct >= args.min_diff_pct]
     if not comparisons:
         print("No comparisons produced (no products scraped, or too few credible matches).")
         return
-    print(format_table(comparisons))
-    path = write_csv(comparisons, out_path or args.out)
+    print(format_table(comparisons, fees_pct=args.fees, postage=args.postage))
+    path = write_csv(comparisons, out_path or args.out, fees_pct=args.fees, postage=args.postage)
     print(f"\n{len(comparisons)} result(s) written to {path}")
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--out", default="results.csv", help="CSV output path (default: results.csv)")
-    p.add_argument("--sort", choices=["abs", "pct"], default="abs",
-                   help="Sort by £ gap (abs) or %% gap (pct)")
+    p.add_argument("--sort", choices=["net", "abs", "pct"], default="net",
+                   help="Sort by estimated net profit (default), £ gap (abs) or %% gap (pct); "
+                        "rows without a net figure sort after those with one")
+    p.add_argument("--fees", type=float, default=13.0, metavar="PCT",
+                   help="Marketplace selling fees as %% of sale price for the net-profit "
+                        "column (default: 13, roughly eBay/Amazon average)")
+    p.add_argument("--postage", type=float, default=0.0, metavar="GBP",
+                   help="Flat postage cost in £ deducted from net profit (default: 0)")
     p.add_argument("--min-diff-pct", type=float, default=None,
                    help="Only show rows where eBay is at least this %% above the retail price")
     p.add_argument("--min-listings", type=int, default=None,

@@ -53,13 +53,21 @@ Useful flags:
 | `--comparator pricerunner\|ebay` | Price source (default `pricerunner`, no auth; `ebay` needs API credentials) |
 | `--fetch-ean` | Visit each product page to extract the EAN for barcode-exact matching (slower — one extra request per product) |
 | `--min-diff-pct N` | Only report rows where the marketplace is ≥ N% above the Argos price |
-| `--sort abs\|pct` | Sort by £ gap (default) or % gap |
+| `--sort net\|abs\|pct` | Sort by estimated net profit (default), £ gap, or % gap |
+| `--fees PCT` | Marketplace selling fees % used for the net-profit column (default 13, roughly eBay/Amazon average) |
+| `--postage GBP` | Flat postage cost deducted from net profit (default 0) |
 | `--min-listings N` | Require ≥ N credible matches before trusting a price (default: comparator's own — 3 for eBay, 1 for PriceRunner) |
 | `--min-score N` | Fuzzy title-match threshold, 0–100 (default 85) |
 | `--delay N` | Minimum seconds between requests to the same host (default 2.5) |
 | `--out FILE` | CSV output path (default `results.csv`) |
 
-Results are printed as a table and written to CSV, sorted by biggest gap.
+Results are printed as a table and written to CSV, sorted by estimated net
+profit: `market_price − argos_price − (market_price × fees%) − postage`.
+Net profit is only computed for resale marketplaces (eBay), where the
+comparable is something you could actually sell at; PriceRunner rows show
+`N/A (retail comparison only)` because its prices are retailer asks — a raw
+gap there means "cheaper/dearer elsewhere at retail", not sale proceeds.
+Rows with negative net profit still appear, sorted to the bottom.
 
 ## How it works
 

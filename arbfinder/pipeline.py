@@ -28,6 +28,7 @@ def compare_products(
     1 for aggregated ones like PriceRunner).
     """
     market = getattr(client, "market_name", "ebay")
+    resale_market = getattr(client, "resale_market", True)
     if min_listings is None:
         min_listings = getattr(client, "default_min_listings", 3)
     comparisons: list[Comparison] = []
@@ -61,6 +62,7 @@ def compare_products(
                 n_listings=len(listings),
                 matched_by=matched_by,
                 listings=listings,
+                resale_market=resale_market,
             )
         )
     return comparisons
