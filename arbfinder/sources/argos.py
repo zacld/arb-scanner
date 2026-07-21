@@ -33,6 +33,15 @@ log = logging.getLogger(__name__)
 class ScrapeBlocked(Exception):
     """The site refused both the plain-HTTP fetch and the browser fallback."""
 
+
+_DENIAL_MARKERS = ("access denied", "reference #", "request unsuccessful", "captcha")
+
+
+def looks_like_denial_page(html: str) -> bool:
+    """Heuristic for bot-protection denial/challenge pages (Akamai et al.)."""
+    lowered = html[:5000].lower()
+    return any(marker in lowered for marker in _DENIAL_MARKERS)
+
 BASE_URL = "https://www.argos.co.uk"
 
 _STATE_RE = re.compile(
@@ -253,6 +262,9 @@ def parse_ean_from_product_page(html: str) -> str | None:
 
 
 class ArgosScraper:
+    # Where the last unparseable page gets saved for diagnosis.
+    debug_dump_path = "debug_argos_page.html"
+
     def __init__(self, session: PoliteSession | None = None, browser: BrowserFetcher | None = None):
         self.session = session or PoliteSession()
         # Created lazily on first 403/empty page unless one was injected.
@@ -308,17 +320,32 @@ class ArgosScraper:
                         self._used_browser = True
                         products = parse_search_page(html)
             if not products:
-                reason = (
-                    self.browser.unavailable_reason
-                    if self.browser is not None and self.browser.unavailable_reason
-                    else "the rendered page contained no recognisable product data"
-                )
+                if self.browser is not None and self.browser.unavailable_reason:
+                    reason = self.browser.unavailable_reason
+                elif html and looks_like_denial_page(html):
+                    reason = (
+                        "bot protection served an Access Denied page to the "
+                        "headless browser"
+                    )
+                else:
+                    reason = "the rendered page contained no recognisable product data"
+                dump_note = ""
+                if html:
+                    try:
+                        from pathlib import Path
+                        Path(self.debug_dump_path).write_text(html, encoding="utf-8")
+                        dump_note = (
+                            f"\nThe fetched page was saved to {self.debug_dump_path} "
+                            "— share that file to diagnose."
+                        )
+                    except OSError as exc:
+                        log.warning("Could not write debug dump: %s", exc)
                 raise ScrapeBlocked(
                     f"Could not scrape {url}.\n"
                     f"Plain HTTP was refused and the browser fallback failed: {reason}\n"
                     "If Playwright is installed and this persists, try --show-browser "
                     "(a visible browser window passes bot checks more reliably than "
-                    "headless)."
+                    f"headless).{dump_note}"
                 )
             if max_products:
                 products = products[:max_products]

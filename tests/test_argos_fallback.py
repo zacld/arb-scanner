@@ -44,6 +44,20 @@ def test_empty_200_page_also_falls_back():
     assert len(products) == 6
 
 
+def test_denial_page_detected_and_dumped(tmp_path):
+    denial_html = (
+        "<html><head><title>Access Denied</title></head>"
+        "<body>You don't have permission to access this resource. "
+        "Reference #18.1234abc</body></html>"
+    )
+    scraper = ArgosScraper(_session(status=403), browser=_browser(denial_html))
+    scraper.debug_dump_path = str(tmp_path / "dump.html")
+    with pytest.raises(ScrapeBlocked) as exc:
+        scraper.scrape("https://x/search/y/")
+    assert "Access Denied page" in str(exc.value)
+    assert (tmp_path / "dump.html").read_text() == denial_html
+
+
 def test_blocked_everywhere_raises_scrapeblocked_with_hint():
     with pytest.raises(ScrapeBlocked) as exc:
         ArgosScraper(_session(status=403), browser=_browser(None)).scrape("https://x/search/y/")

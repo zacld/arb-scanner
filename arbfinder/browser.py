@@ -94,7 +94,12 @@ class BrowserFetcher:
         self._throttle()
         try:
             self._page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_s * 1000)
-            # Give client-side rendering a moment to fill the page in.
+            # Give client-side rendering time to fill the page in: wait for
+            # network quiet if it comes, then a short settle either way.
+            try:
+                self._page.wait_for_load_state("networkidle", timeout=10_000)
+            except Exception:  # noqa: BLE001 - busy pages never go idle; proceed anyway
+                pass
             self._page.wait_for_timeout(1500)
             return self._page.content()
         except Exception as exc:  # noqa: BLE001
