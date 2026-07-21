@@ -51,12 +51,28 @@ def main() -> None:
         print("=" * 70)
         input("Press Enter when results are on screen... ")
 
-        try:
-            html = page.content()
-        except Exception as exc:  # noqa: BLE001
-            print(f"Could not read page content: {exc}")
-            browser.close()
-            return
+        # Google Shopping fires background requests constantly, so page.content()
+        # can hit "page is navigating" — settle, then retry a few times.
+        html = None
+        for attempt in range(6):
+            try:
+                page.wait_for_load_state("networkidle", timeout=4000)
+            except Exception:  # noqa: BLE001 - never fully idle; that's fine
+                pass
+            try:
+                html = page.content()
+                break
+            except Exception as exc:  # noqa: BLE001
+                print(f"  (page busy, retrying {attempt + 1}/6…: {str(exc)[:60]})")
+                page.wait_for_timeout(1500)
+        if html is None:
+            # Last resort: pull the DOM straight out of the renderer.
+            try:
+                html = page.evaluate("() => document.documentElement.outerHTML")
+            except Exception as exc:  # noqa: BLE001
+                print(f"Could not read page content: {exc}")
+                browser.close()
+                return
         OUT_HTML.write_text(html, encoding="utf-8")
         browser.close()
 
