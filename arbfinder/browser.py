@@ -100,6 +100,21 @@ class BrowserFetcher:
                 self._page.wait_for_load_state("networkidle", timeout=10_000)
             except Exception:  # noqa: BLE001 - busy pages never go idle; proceed anyway
                 pass
+            # Scroll through the page so virtualised/lazy product cards render,
+            # then return to the top.
+            try:
+                self._page.evaluate(
+                    """async () => {
+                        const limit = Math.min(document.body.scrollHeight, 30000);
+                        for (let y = 0; y < limit; y += 800) {
+                            window.scrollTo(0, y);
+                            await new Promise(r => setTimeout(r, 200));
+                        }
+                        window.scrollTo(0, 0);
+                    }"""
+                )
+            except Exception:  # noqa: BLE001
+                pass
             self._page.wait_for_timeout(1500)
             return self._page.content()
         except Exception as exc:  # noqa: BLE001

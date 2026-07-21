@@ -73,11 +73,15 @@ net profit still appear, sorted to the bottom.
 
 ## How it works
 
-1. **Scrape Argos** (`arbfinder/sources/argos.py`). Search/category pages are
-   server-rendered with product data embedded as JSON (`window.App` redux
-   state). The parser tries three strategies in order so it degrades
-   gracefully as Argos changes markup: embedded state JSON → JSON-LD →
-   HTML product cards.
+1. **Scrape Argos** (`arbfinder/sources/argos.py`). The parser tries several
+   strategies in order so it degrades gracefully as Argos changes markup:
+   legacy `window.App` redux state → **Next.js flight data** (the current,
+   2026 frontend: product objects arrive in `self.__next_f.push([1,"…"])`
+   chunks, so the parser reassembles those chunks, pulls every
+   `"productData":[…]` array, and hunts each product dict for its current
+   price while skipping was/RRP/monthly-finance figures) → JSON-LD →
+   HTML product cards (matched by `data-product-id`, monthly-payment
+   subtrees stripped first).
 
    **Argos 403s plain HTTP clients** (bot protection), so on a 403 — or a
    200 whose HTML contains no product data — the scraper automatically

@@ -17,6 +17,13 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from arbfinder.sources.argos import (  # noqa: E402
+    decode_flight_text,
+    extract_flight_product_dicts,
+    parse_search_page,
+)
+
 PATH = Path(sys.argv[1] if len(sys.argv) > 1 else "debug_argos_page.html")
 MAX_CARD_CHARS = 6000
 
@@ -44,6 +51,23 @@ def main() -> None:
         print(f"--- script {attrs} len={len(body)}")
         print(body[:300].replace("\n", " "))
         print("...")
+
+    print("\n== NEXT.JS FLIGHT DATA ==")
+    import json as _json
+    flight = decode_flight_text(html)
+    print(f"decoded flight text: {len(flight)} chars; "
+          f"'productData' occurrences: {flight.count(chr(34) + 'productData' + chr(34))}")
+    raw = extract_flight_product_dicts(html)
+    print(f"flight product dicts extracted: {len(raw)}")
+    if raw:
+        print("--- first product dict (truncated to 5000 chars) ---")
+        print(_json.dumps(raw[0], indent=1)[:5000])
+
+    print("\n== WHAT THE CURRENT PARSER GETS ==")
+    products = parse_search_page(html)
+    print(f"parse_search_page -> {len(products)} products")
+    for p in products[:10]:
+        print(f"  £{p.price:<9.2f} ean={p.ean or '-':<15} {p.name[:60]}")
 
     print("\n== FIRST 10 PRODUCT LINK HREFS ==")
     for a in product_links[:10]:

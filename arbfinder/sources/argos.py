@@ -143,6 +143,133 @@ def _parse_state_json(html: str) -> list[Product]:
     return products
 
 
+# --- strategy 1b: Next.js flight data (current Argos frontend, 2026) --------
+#
+# Argos now server-renders through Next.js App Router: product data arrives in
+# React "flight" chunks pushed via self.__next_f.push([1,"..."]) — JS string
+# literals that concatenate into a stream containing rows like
+#   20:[["$","$L21",null,{"pageProps":{"productData":[{...}, ...]}}]]
+# Only a handful of product cards exist in the DOM (the rest hydrate on
+# scroll), so this stream is the authoritative source.
+
+_NEXT_F_RE = re.compile(r'self\.__next_f\.push\(\[1,"((?:[^"\\]|\\.)*)"\]\)', re.DOTALL)
+
+_PRICE_KEY_BLOCKLIST = ("monthly", "credit", "instal", "finance", "was", "rrp", "saving", "deposit")
+
+
+def decode_flight_text(html: str) -> str:
+    """Concatenate and unescape every __next_f string chunk in the page."""
+    parts = []
+    for m in _NEXT_F_RE.finditer(html):
+        try:
+            parts.append(json.loads('"' + m.group(1) + '"'))
+        except json.JSONDecodeError:
+            continue
+    return "".join(parts)
+
+
+def extract_flight_product_dicts(html: str) -> list[dict]:
+    """Pull every raw item out of "productData":[...] arrays in the flight stream."""
+    text = decode_flight_text(html)
+    if not text:
+        return []
+    decoder = json.JSONDecoder()
+    out: list[dict] = []
+    for m in re.finditer(r'"productData"\s*:\s*', text):
+        try:
+            arr, _ = decoder.raw_decode(text, m.end())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(arr, list):
+            out.extend(d for d in arr if isinstance(d, dict))
+    return out
+
+
+def _hunt_price(node, max_depth: int = 6) -> float | None:
+    """Find the most plausible current-price value anywhere in a product dict.
+
+    The exact field name varies between Argos frontend releases, so instead of
+    hardcoding one path we walk the structure: keys containing 'price' (or
+    now/current/amount/value beneath a price-ish parent) are candidates; paths
+    mentioning credit/monthly/was/RRP etc. are skipped so we never mistake a
+    finance instalment or crossed-out price for the selling price.
+    """
+    candidates: list[tuple[list[str], float]] = []
+
+    def walk(n, path):
+        if len(path) > max_depth:
+            return
+        if isinstance(n, dict):
+            # Price rows often carry their kind as a value, not a key:
+            # {"amount": "249.99", "type": "was"} must not win over "now".
+            kind = str(n.get("type") or n.get("priceType") or "").lower()
+            if any(bad in kind for bad in _PRICE_KEY_BLOCKLIST):
+                return
+            if kind in ("now", "current"):
+                path = path + ["now"]
+            for k, v in n.items():
+                kl = str(k).lower()
+                if any(bad in kl for bad in _PRICE_KEY_BLOCKLIST):
+                    continue
+                if isinstance(v, (dict, list)):
+                    walk(v, path + [kl])
+                else:
+                    priceish = "price" in kl or (
+                        kl in ("now", "current", "amount", "value")
+                        and any("price" in seg for seg in path)
+                    )
+                    if priceish:
+                        p = _to_price(v)
+                        if p is not None and 0.5 <= p <= 100000:
+                            candidates.append((path + [kl], p))
+        elif isinstance(n, list):
+            for v in n:
+                walk(v, path)
+
+    walk(node, [])
+    if not candidates:
+        return None
+
+    def score(c):
+        joined = " ".join(c[0])
+        return ("now" in joined or "current" in joined) * 2 + ("price" in joined)
+
+    return max(candidates, key=score)[1]
+
+
+def _parse_flight_products(html: str, soup: BeautifulSoup) -> list[Product]:
+    raw = extract_flight_product_dicts(html)
+    if not raw:
+        return []
+    card_prices = _card_price_map(soup)
+    products: list[Product] = []
+    seen: set[str] = set()
+    for d in raw:
+        pid = str(d.get("id") or "")
+        attrs = d.get("attributes") if isinstance(d.get("attributes"), dict) else {}
+        name = attrs.get("name") or attrs.get("title") or d.get("title") or d.get("name")
+        if not pid or pid in seen or not isinstance(name, str) or not name.strip():
+            continue
+        price = _hunt_price(attrs) or _hunt_price(d) or card_prices.get(pid)
+        if price is None:
+            log.debug("Flight product %s (%s) has no findable price; skipping", pid, name)
+            continue
+        seen.add(pid)
+        ean = attrs.get("ean") or attrs.get("gtin13") or attrs.get("gtin") or d.get("ean")
+        brand = attrs.get("brand") or d.get("brand")
+        products.append(
+            Product(
+                name=name.strip(),
+                price=price,
+                url=f"{BASE_URL}/product/{pid}",
+                ean=str(ean) if ean else None,
+                brand=brand if isinstance(brand, str) else None,
+                model_number=attrs.get("modelNumber") or attrs.get("partNumber"),
+            )
+        )
+    return products
+
+
 # --- strategy 2: JSON-LD ----------------------------------------------------
 
 def _products_from_ldjson(data) -> list[Product]:
@@ -199,23 +326,63 @@ _CARD_SELECTORS = [
     "div.ProductCardstyles__Wrapper-sc-1fgptbz-0",
 ]
 _TITLE_SELECTORS = ['[data-test="component-product-card-title"]', '[data-test="product-title"]', "h2", "h3"]
-_PRICE_SELECTORS = ['[data-test="component-product-card-price"]', '[data-test="product-price"]', ".prices"]
+_PRICE_SELECTORS = [
+    '[data-test="component-product-card-price"]',
+    '[data-test="product-price"]',
+    ".ds-c-price",
+    '[data-test*="price"]',
+    ".prices",
+]
+# Subtrees that contain £ figures which are NOT the selling price.
+_PRICE_NOISE_SELECTORS = ['[data-test*="monthly"]', '[data-test*="credit"]', "del", "s"]
+_POUND_RE = re.compile(r"£\s*([\d,]+(?:\.\d{1,2})?)")
+
+
+def _card_price(card) -> float | None:
+    """Selling price from a card: known selectors first, then the first £
+    figure in its text after stripping finance/was-price subtrees."""
+    for sel in _PRICE_NOISE_SELECTORS:
+        for el in card.select(sel):
+            el.decompose()
+    for sel in _PRICE_SELECTORS:
+        el = card.select_one(sel)
+        if el:
+            price = _to_price(el.get_text(" ", strip=True))
+            if price:
+                return price
+    m = _POUND_RE.search(card.get_text(" ", strip=True))
+    return float(m.group(1).replace(",", "")) if m else None
+
+
+def _find_cards(soup: BeautifulSoup) -> list:
+    for sel in _CARD_SELECTORS:
+        cards = soup.select(sel)
+        if cards:
+            return cards
+    return []
+
+
+def _card_price_map(soup: BeautifulSoup) -> dict[str, float]:
+    """Map data-product-id -> price for every rendered card that shows one."""
+    out: dict[str, float] = {}
+    for card in _find_cards(soup):
+        pid = card.get("data-product-id")
+        if not pid or pid in out:
+            continue
+        price = _card_price(card)
+        if price:
+            out[str(pid)] = price
+    return out
 
 
 def _parse_cards(soup: BeautifulSoup) -> list[Product]:
     products: list[Product] = []
-    cards = []
-    for sel in _CARD_SELECTORS:
-        cards = soup.select(sel)
-        if cards:
-            break
-    for card in cards:
+    for card in _find_cards(soup):
         title_el = next((card.select_one(s) for s in _TITLE_SELECTORS if card.select_one(s)), None)
-        price_el = next((card.select_one(s) for s in _PRICE_SELECTORS if card.select_one(s)), None)
         link = card.select_one('a[href*="/product/"]')
-        if not (title_el and price_el and link):
+        if not (title_el and link):
             continue
-        price = _to_price(price_el.get_text(" ", strip=True))
+        price = _card_price(card)
         if not price:
             continue
         products.append(
@@ -236,6 +403,9 @@ def parse_search_page(html: str) -> list[Product]:
     if products:
         return products
     soup = BeautifulSoup(html, "lxml")
+    products = _parse_flight_products(html, soup)
+    if products:
+        return products
     products = _parse_ldjson(soup)
     if products:
         return products
