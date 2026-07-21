@@ -23,10 +23,15 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
-from ..http import PoliteSession
+from ..browser import BrowserFetcher
+from ..http import PoliteSession, RobotsDisallowed
 from ..models import Product
 
 log = logging.getLogger(__name__)
+
+
+class ScrapeBlocked(Exception):
+    """The site refused both the plain-HTTP fetch and the browser fallback."""
 
 BASE_URL = "https://www.argos.co.uk"
 
@@ -248,8 +253,39 @@ def parse_ean_from_product_page(html: str) -> str | None:
 
 
 class ArgosScraper:
-    def __init__(self, session: PoliteSession | None = None):
+    def __init__(self, session: PoliteSession | None = None, browser: BrowserFetcher | None = None):
         self.session = session or PoliteSession()
+        # Created lazily on first 403/empty page unless one was injected.
+        self.browser = browser
+        self._used_browser = False
+
+    def _browser_html(self, url: str) -> str | None:
+        """Fetch a rendered page via Playwright, still honouring robots.txt."""
+        if not self.session.allowed(url):
+            raise RobotsDisallowed(f"robots.txt disallows fetching {url}")
+        if self.browser is None:
+            self.browser = BrowserFetcher(
+                min_delay=self.session.min_delay, jitter=self.session.jitter
+            )
+        return self.browser.fetch(url)
+
+    def _fetch_html(self, url: str) -> str | None:
+        """Plain HTTP first; on a 4xx/5xx or an empty-looking page, fall back
+        to the rendered browser. Returns None only if both routes fail."""
+        if self._used_browser:
+            # The site already refused plain HTTP once — don't keep poking it.
+            return self._browser_html(url)
+        resp = self.session.get(url)
+        if resp.status_code == 200:
+            return resp.text
+        log.warning(
+            "HTTP %s from %s — falling back to Playwright browser rendering "
+            "(Argos blocks plain HTTP clients)", resp.status_code, url,
+        )
+        html = self._browser_html(url)
+        if html is not None:
+            self._used_browser = True
+        return html
 
     def scrape(self, url: str, max_products: int | None = None, fetch_ean: bool = False) -> list[Product]:
         """Scrape an Argos search or category URL.
@@ -257,24 +293,46 @@ class ArgosScraper:
         With ``fetch_ean=True``, also visits each product page (politely, one
         request per product) to pull the EAN for barcode-level matching.
         """
-        resp = self.session.get(url)
-        resp.raise_for_status()
-        products = parse_search_page(resp.text)
-        if not products:
-            log.warning(
-                "No products parsed from %s — page may be JS-rendered or blocked "
-                "(status %s, %d bytes). Consider the Playwright fallback.",
-                url, resp.status_code, len(resp.text),
-            )
-        if max_products:
-            products = products[:max_products]
-        if fetch_ean:
-            for p in products:
-                if p.ean:
-                    continue
-                try:
-                    detail = self.session.get(p.url)
-                    p.ean = parse_ean_from_product_page(detail.text)
-                except Exception as exc:  # noqa: BLE001 - one bad page shouldn't kill the run
-                    log.warning("Could not fetch EAN for %s: %s", p.url, exc)
-        return products
+        try:
+            products: list[Product] = []
+            html = self._fetch_html(url)
+            if html is not None:
+                products = parse_search_page(html)
+                if not products and not self._used_browser:
+                    log.warning(
+                        "Page fetched but no product data found in %d bytes — "
+                        "retrying with browser rendering", len(html),
+                    )
+                    html = self._browser_html(url)
+                    if html:
+                        self._used_browser = True
+                        products = parse_search_page(html)
+            if not products:
+                reason = (
+                    self.browser.unavailable_reason
+                    if self.browser is not None and self.browser.unavailable_reason
+                    else "the rendered page contained no recognisable product data"
+                )
+                raise ScrapeBlocked(
+                    f"Could not scrape {url}.\n"
+                    f"Plain HTTP was refused and the browser fallback failed: {reason}\n"
+                    "If Playwright is installed and this persists, try --show-browser "
+                    "(a visible browser window passes bot checks more reliably than "
+                    "headless)."
+                )
+            if max_products:
+                products = products[:max_products]
+            if fetch_ean:
+                for p in products:
+                    if p.ean:
+                        continue
+                    try:
+                        detail_html = self._fetch_html(p.url)
+                        if detail_html:
+                            p.ean = parse_ean_from_product_page(detail_html)
+                    except Exception as exc:  # noqa: BLE001 - one bad page shouldn't kill the run
+                        log.warning("Could not fetch EAN for %s: %s", p.url, exc)
+            return products
+        finally:
+            if self.browser is not None:
+                self.browser.close()

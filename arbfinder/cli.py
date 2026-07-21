@@ -92,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--ebay-env", choices=["PRODUCTION", "SANDBOX"], default="PRODUCTION")
     scan.add_argument("--delay", type=float, default=2.5,
                       help="Minimum seconds between requests to the same host (default: 2.5)")
+    scan.add_argument("--show-browser", action="store_true",
+                      help="Run the Playwright fallback with a visible browser window "
+                           "instead of headless (passes bot checks more reliably)")
     _add_common(scan)
 
     demo = sub.add_parser("demo", help="Run the full pipeline on bundled fixtures (offline)")
@@ -147,13 +150,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
 
+    from .browser import BrowserFetcher
     from .http import PoliteSession
-    from .sources.argos import ArgosScraper
+    from .sources.argos import ArgosScraper, ScrapeBlocked
 
     session = PoliteSession(min_delay=args.delay)
-    scraper = ArgosScraper(session)
+    browser = BrowserFetcher(headless=not args.show_browser,
+                             min_delay=args.delay) if args.show_browser else None
+    scraper = ArgosScraper(session, browser=browser)
     print(f"Scraping {args.url} …")
-    products = scraper.scrape(args.url, max_products=args.max_products, fetch_ean=args.fetch_ean)
+    try:
+        products = scraper.scrape(args.url, max_products=args.max_products, fetch_ean=args.fetch_ean)
+    except ScrapeBlocked as exc:
+        print(f"\n{exc}", file=sys.stderr)
+        return 1
 
     clients = []
     for name in wanted:

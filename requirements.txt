@@ -3,5 +3,9 @@ beautifulsoup4>=4.12
 lxml>=5.0
 rapidfuzz>=3.6
 
+# Optional: browser fallback for sites that 403 plain HTTP clients (Argos does).
+# After installing, also run: playwright install chromium
+playwright>=1.40
+
 # dev
 pytest>=8.0

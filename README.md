@@ -77,8 +77,21 @@ net profit still appear, sorted to the bottom.
    server-rendered with product data embedded as JSON (`window.App` redux
    state). The parser tries three strategies in order so it degrades
    gracefully as Argos changes markup: embedded state JSON → JSON-LD →
-   HTML product cards. If all three come up empty it logs that the page is
-   likely JS-rendered/blocked (that's the cue to add a Playwright fetch).
+   HTML product cards.
+
+   **Argos 403s plain HTTP clients** (bot protection), so on a 403 — or a
+   200 whose HTML contains no product data — the scraper automatically
+   retries through a real rendered browser (`arbfinder/browser.py`,
+   Playwright + Chromium) with the same polite delays and robots.txt check.
+   That fallback needs the optional dependency:
+
+   ```bash
+   pip install playwright
+   playwright install chromium
+   ```
+
+   If headless mode is still blocked, `--show-browser` runs the fallback
+   with a visible browser window, which passes bot checks more reliably.
 2. **Find comparables** on the selected marketplace:
    - **PriceRunner UK** (`arbfinder/comparators/pricerunner.py`, default, no
      auth): queries the public JSON search endpoint that PriceRunner's own
