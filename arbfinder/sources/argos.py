@@ -237,6 +237,20 @@ def _hunt_price(node, max_depth: int = 6) -> float | None:
     return max(candidates, key=score)[1]
 
 
+def _flight_price(attrs: dict) -> float | None:
+    """Current selling price from a flight product's attributes.
+
+    Confirmed shape of the 2026 Argos search payload: ``attributes.price`` is
+    the current price as a number and ``attributes.wasPrice`` the pre-discount
+    price (0 when not on offer). We read ``price`` directly and fall back to
+    the generic hunter only if that field is ever renamed or missing.
+    """
+    p = _to_price(attrs.get("price"))
+    if p is not None and p > 0:
+        return p
+    return _hunt_price(attrs)
+
+
 def _parse_flight_products(html: str, soup: BeautifulSoup) -> list[Product]:
     raw = extract_flight_product_dicts(html)
     if not raw:
@@ -245,12 +259,12 @@ def _parse_flight_products(html: str, soup: BeautifulSoup) -> list[Product]:
     products: list[Product] = []
     seen: set[str] = set()
     for d in raw:
-        pid = str(d.get("id") or "")
+        pid = str(d.get("id") or d.get("productId") or "")
         attrs = d.get("attributes") if isinstance(d.get("attributes"), dict) else {}
         name = attrs.get("name") or attrs.get("title") or d.get("title") or d.get("name")
         if not pid or pid in seen or not isinstance(name, str) or not name.strip():
             continue
-        price = _hunt_price(attrs) or _hunt_price(d) or card_prices.get(pid)
+        price = _flight_price(attrs) or _hunt_price(d) or card_prices.get(pid)
         if price is None:
             log.debug("Flight product %s (%s) has no findable price; skipping", pid, name)
             continue
