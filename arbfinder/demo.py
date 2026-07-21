@@ -14,6 +14,7 @@ from pathlib import Path
 from rapidfuzz import fuzz
 
 from .comparators.ebay import parse_item_summaries
+from .comparators.pricerunner import parse_search_response
 from .models import ComparableListing, Product
 from .sources.argos import parse_search_page
 
@@ -44,3 +45,32 @@ class DemoEbayClient:
         if fuzz.token_set_ratio(best_key, query) < 60:
             return []
         return parse_item_summaries(by_query[best_key])
+
+
+class DemoPriceRunnerClient:
+    """Duck-typed stand-in for PriceRunnerClient backed by fixture responses.
+
+    Mirrors the real client's behaviour of sending the EAN as the search
+    query, so fixture keys are EANs or natural-language queries alike.
+    """
+
+    market_name = "pricerunner"
+    default_min_listings = 1
+
+    def __init__(self, data: dict | None = None):
+        if data is None:
+            data = json.loads(
+                (DATA_DIR / "pricerunner_responses.json").read_text(encoding="utf-8")
+            )
+        self.by_query: dict = data.get("by_query", {})
+
+    def search(self, query: str | None = None, gtin: str | None = None, **_) -> list[ComparableListing]:
+        q = gtin or query
+        if not q or not self.by_query:
+            return []
+        if q in self.by_query:  # exact hit (EAN keys)
+            return parse_search_response(self.by_query[q])
+        best_key = max(self.by_query, key=lambda k: fuzz.token_set_ratio(k, q))
+        if fuzz.token_set_ratio(best_key, q) < 60:
+            return []
+        return parse_search_response(self.by_query[best_key])

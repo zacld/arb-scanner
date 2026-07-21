@@ -38,15 +38,18 @@ def _trunc(s: str, n: int) -> str:
 
 
 def format_table(comparisons: list[Comparison], name_width: int = 44) -> str:
+    market = comparisons[0].market if comparisons else "market"
+    market_col = f"{market} £"
+    mw = max(8, len(market_col))
     header = (
-        f"{'Product':<{name_width}}  {'Argos £':>8}  {'eBay £':>8}  "
+        f"{'Product':<{name_width}}  {'Argos £':>8}  {market_col:>{mw}}  "
         f"{'Diff £':>8}  {'Diff %':>7}  {'N':>3}  {'Match':<5}"
     )
     lines = [header, "-" * len(header)]
     for c in comparisons:
         lines.append(
             f"{_trunc(c.product.name, name_width):<{name_width}}  "
-            f"{c.product.price:>8.2f}  {c.market_price:>8.2f}  "
+            f"{c.product.price:>8.2f}  {c.market_price:>{mw}.2f}  "
             f"{c.diff_abs:>+8.2f}  {c.diff_pct:>+6.1f}%  {c.n_listings:>3}  {c.matched_by:<5}"
         )
     return "\n".join(lines)

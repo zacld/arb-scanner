@@ -1,0 +1,35 @@
+{
+  "by_query": {
+    "5702017424736": {
+      "products": [
+        {"name": "LEGO Technic 42151 Bugatti Bolide", "lowestPrice": {"amount": "44.97", "currency": "GBP"}, "url": "/pl/38-5201234/Toys/LEGO-Technic-42151-Bugatti-Bolide-Compare-Prices", "brandName": "LEGO"}
+      ]
+    },
+    "0622356254529": {
+      "products": [
+        {"name": "Ninja Foodi MAX Dual Zone Air Fryer AF400UK", "lowestPrice": {"amount": "189.00", "currency": "GBP"}, "url": "/pl/154-5312077/Fryers/Ninja-Foodi-MAX-Dual-Zone-AF400UK-Compare-Prices", "brandName": "Ninja"}
+      ]
+    },
+    "tommee tippee perfect prep day night machine white": {
+      "products": [
+        {"name": "Tommee Tippee Perfect Prep Day & Night Machine White", "lowestPrice": {"amount": "99.99", "currency": "GBP"}, "url": "/pl/236-5044811/Baby-Feeding/Tommee-Tippee-Perfect-Prep-Day-Night-Compare-Prices", "brandName": "Tommee Tippee"}
+      ]
+    },
+    "sony wh ch520 wireless on ear headphones black": {
+      "products": [
+        {"name": "Sony WH-CH520 Wireless Headphones, Black", "lowestPrice": {"amount": "32.95", "currency": "GBP"}, "url": "/pl/185-5299001/Headphones/Sony-WH-CH520-Compare-Prices", "brandName": "Sony"},
+        {"name": "Replacement Ear Pads Cushions for Sony WH-CH510 WH-CH520", "lowestPrice": {"amount": "8.99", "currency": "GBP"}, "url": "/pl/185-5299002/Headphone-Accessories/Ear-Pads-WH-CH520-Compare-Prices"}
+      ]
+    },
+    "casio fx 83gtcw scientific calculator blue": {
+      "products": [
+        {"name": "Casio FX-83GTCW Scientific Calculator Blue", "lowestPrice": {"amount": "11.99", "currency": "GBP"}, "url": "/pl/229-5388112/Calculators/Casio-FX-83GTCW-Blue-Compare-Prices", "brandName": "Casio"}
+      ]
+    },
+    "shark anti hair wrap cordless vacuum cleaner iz300uk": {
+      "products": [
+        {"name": "Shark Anti Hair Wrap Cordless Vacuum IZ300UK", "lowestPrice": {"amount": "229.00", "currency": "GBP"}, "url": "/pl/106-5277430/Vacuum-Cleaners/Shark-IZ300UK-Compare-Prices", "brandName": "Shark"}
+      ]
+    }
+  }
+}

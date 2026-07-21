@@ -4,7 +4,8 @@ Scrapes product prices from UK retail sites, cross-references the same
 products on eBay UK via the official Browse API, and surfaces items where the
 retail price is meaningfully below the going marketplace rate.
 
-**Phase 1 (this repo today):** Argos → eBay UK.
+**Phase 1 (this repo today):** Argos → eBay UK *or* PriceRunner UK
+(selectable with `--comparator`; PriceRunner needs no API key).
 Phase 2 (planned): John Lewis, Sainsbury's as extra sources; Amazon UK as an
 extra comparison target.
 
@@ -13,7 +14,8 @@ extra comparison target.
 ```bash
 pip install -r requirements.txt
 
-# See the full pipeline run offline on bundled fixture data (no keys needed):
+# See the full pipeline run offline on bundled fixture data (no keys needed).
+# Runs both comparators side by side; --comparator ebay|pricerunner for one.
 python -m arbfinder demo
 ```
 
@@ -31,25 +33,28 @@ Casio FX-83GTCW Scientific Calculator - Blue     13.99     13.50     -0.49    -3
 
 ## Live runs
 
-1. Register a free app at <https://developer.ebay.com/my/keys> (Production
-   keyset). Copy `.env.example` to `.env` and fill in the App ID / Cert ID,
-   then export them (`export $(grep -v '^#' .env | xargs)`), or export
-   `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` directly.
-2. Run a scan against any Argos search or category URL:
+No key needed — the default comparator is PriceRunner UK:
 
 ```bash
 python -m arbfinder scan "https://www.argos.co.uk/search/air-fryer/" \
     --max-products 20 --min-diff-pct 15
 ```
 
+To compare against eBay UK instead (once your Browse API key is approved):
+register a free app at <https://developer.ebay.com/my/keys> (Production
+keyset), copy `.env.example` to `.env` and fill in the App ID / Cert ID, then
+export them (`export $(grep -v '^#' .env | xargs)`) and add
+`--comparator ebay` to the command above.
+
 Useful flags:
 
 | Flag | Meaning |
 |---|---|
-| `--fetch-ean` | Visit each product page to extract the EAN for barcode-exact eBay matching (slower — one extra request per product) |
-| `--min-diff-pct N` | Only report rows where eBay is ≥ N% above the Argos price |
+| `--comparator pricerunner\|ebay` | Price source (default `pricerunner`, no auth; `ebay` needs API credentials) |
+| `--fetch-ean` | Visit each product page to extract the EAN for barcode-exact matching (slower — one extra request per product) |
+| `--min-diff-pct N` | Only report rows where the marketplace is ≥ N% above the Argos price |
 | `--sort abs\|pct` | Sort by £ gap (default) or % gap |
-| `--min-listings N` | Require ≥ N credible eBay matches before trusting a price (default 3) |
+| `--min-listings N` | Require ≥ N credible matches before trusting a price (default: comparator's own — 3 for eBay, 1 for PriceRunner) |
 | `--min-score N` | Fuzzy title-match threshold, 0–100 (default 85) |
 | `--delay N` | Minimum seconds between requests to the same host (default 2.5) |
 | `--out FILE` | CSV output path (default `results.csv`) |
@@ -64,10 +69,19 @@ Results are printed as a table and written to CSV, sorted by biggest gap.
    gracefully as Argos changes markup: embedded state JSON → JSON-LD →
    HTML product cards. If all three come up empty it logs that the page is
    likely JS-rendered/blocked (that's the cue to add a Playwright fetch).
-2. **Find comparables on eBay** (`arbfinder/comparators/ebay.py`). Official
-   Browse API with an application OAuth token (no user consent flow). EAN
-   products are searched by `gtin` (barcode-exact); the rest by cleaned title,
-   filtered to GB delivery, GBP, fixed-price, new condition.
+2. **Find comparables** on the selected marketplace:
+   - **PriceRunner UK** (`arbfinder/comparators/pricerunner.py`, default, no
+     auth): queries the public JSON search endpoint that PriceRunner's own
+     frontend uses. Chosen over Google Shopping because it returns clean
+     structured data with a plain GET, while Google Shopping is heavily
+     bot-defended with obfuscated markup. Results are aggregated catalog
+     products priced at the lowest current retailer offer (so one match is
+     meaningful — `min_listings` defaults to 1) and the search response
+     carries no delivery cost (shipping reported as 0.00).
+   - **eBay UK** (`arbfinder/comparators/ebay.py`, `--comparator ebay`):
+     official Browse API with an application OAuth token (no user consent
+     flow). EAN products are searched by `gtin` (barcode-exact); the rest by
+     cleaned title, filtered to GB delivery, GBP, fixed-price, new condition.
 3. **Match & filter** (`arbfinder/matching.py`). Titles are normalised
    (lowercase, strip pack sizes, punctuation, marketing filler) and compared
    with rapidfuzz `token_set_ratio`; title-search results below the threshold
