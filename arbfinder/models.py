@@ -69,3 +69,29 @@ class Comparison:
         return self.market_price - self.product.price - (
             self.market_price * fees_pct / 100.0
         ) - postage
+
+
+@dataclass
+class MergedRow:
+    """One Argos product with its matches across all comparators."""
+
+    product: Product
+    ebay: Comparison | None = None
+    pricerunner: Comparison | None = None
+
+    def net_profit(self, fees_pct: float, postage: float) -> float | None:
+        """Computed off the eBay resale price only; None without an eBay match."""
+        if self.ebay is None:
+            return None
+        return self.ebay.net_profit(fees_pct, postage)
+
+    @property
+    def pricerunner_gap(self) -> float | None:
+        """Raw £ gap vs PriceRunner's lowest retail ask — a signal, not profit."""
+        return self.pricerunner.diff_abs if self.pricerunner else None
+
+    @property
+    def best_diff_pct(self) -> float | None:
+        """Largest available raw % gap across markets (for threshold filters)."""
+        pcts = [c.diff_pct for c in (self.ebay, self.pricerunner) if c is not None]
+        return max(pcts) if pcts else None

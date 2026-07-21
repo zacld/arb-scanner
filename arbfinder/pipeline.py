@@ -5,9 +5,33 @@ from __future__ import annotations
 import logging
 
 from .matching import clean_title, filter_matches, representative_price
-from .models import Comparison, Product
+from .models import Comparison, MergedRow, Product
 
 log = logging.getLogger(__name__)
+
+
+def compare_products_multi(
+    products: list[Product],
+    clients: list,
+    min_score: float = 85.0,
+    min_listings: int | None = None,
+) -> list[MergedRow]:
+    """Run every comparator over the products and merge to one row per product.
+
+    A product appears if at least one comparator matched it; each row carries
+    whichever market comparisons exist. Row order follows the scraped product
+    order (final sorting happens in the report layer).
+    """
+    by_url: dict[str, MergedRow] = {}
+    for client in clients:
+        market = getattr(client, "market_name", "ebay")
+        for comp in compare_products(products, client, min_score, min_listings):
+            row = by_url.setdefault(comp.product.url, MergedRow(product=comp.product))
+            if market == "pricerunner":
+                row.pricerunner = comp
+            else:
+                row.ebay = comp
+    return [by_url[p.url] for p in products if p.url in by_url]
 
 
 def compare_products(

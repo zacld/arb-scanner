@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from .models import Comparison
+from .models import Comparison, MergedRow
 
 CSV_COLUMNS = [
     "product_name", "source", "source_price", "market", "market_price",
@@ -101,3 +101,96 @@ def format_table(
             "(N/A = retail comparison only — prices are asks, not resale value)"
         )
     return "\n".join(lines)
+
+
+# --- merged (multi-comparator) report --------------------------------------
+
+MERGED_CSV_COLUMNS = [
+    "product_name", "argos_price",
+    "pricerunner_price", "pricerunner_gap_gbp",
+    "ebay_price", "ebay_diff_gbp", "net_profit_gbp", "ebay_n_listings",
+    "argos_url", "pricerunner_url", "ebay_url",
+]
+
+_NEG_INF = float("-inf")
+
+
+def sort_merged(
+    rows: list[MergedRow],
+    fees_pct: float = 13.0,
+    postage: float = 0.0,
+) -> list[MergedRow]:
+    """Net profit descending; rows without an eBay match come after all rows
+    that have one, ordered among themselves by PriceRunner gap."""
+    def key(r: MergedRow):
+        net = r.net_profit(fees_pct, postage)
+        gap = r.pricerunner_gap if r.pricerunner_gap is not None else _NEG_INF
+        if net is not None:
+            return (1, net, gap)
+        return (0, gap, _NEG_INF)
+    return sorted(rows, key=key, reverse=True)
+
+
+def _cell(value: float | None, width: int, signed: bool = False) -> str:
+    if value is None:
+        return f"{'—':>{width}}"
+    return f"{value:>{'+' if signed else ''}{width}.2f}"
+
+
+def format_merged_table(
+    rows: list[MergedRow],
+    name_width: int = 40,
+    fees_pct: float = 13.0,
+    postage: float = 0.0,
+) -> str:
+    header = (
+        f"{'Product':<{name_width}}  {'Argos £':>8}  {'PRun £':>8}  {'PR gap':>8}  "
+        f"{'eBay £':>8}  {'Net £':>8}"
+    )
+    lines = [header, "-" * len(header)]
+    for r in rows:
+        pr = r.pricerunner
+        eb = r.ebay
+        lines.append(
+            f"{_trunc(r.product.name, name_width):<{name_width}}  "
+            f"{r.product.price:>8.2f}  "
+            f"{_cell(pr.market_price if pr else None, 8)}  "
+            f"{_cell(r.pricerunner_gap, 8, signed=True)}  "
+            f"{_cell(eb.market_price if eb else None, 8)}  "
+            f"{_cell(r.net_profit(fees_pct, postage), 8, signed=True)}"
+        )
+    lines.append(
+        f"(net = eBay resale minus {fees_pct:g}% fees + £{postage:.2f} postage; "
+        f"PR gap = vs lowest retail ask, not profit; — = no match)"
+    )
+    return "\n".join(lines)
+
+
+def write_merged_csv(
+    rows: list[MergedRow],
+    path: str | Path,
+    fees_pct: float = 13.0,
+    postage: float = 0.0,
+) -> Path:
+    path = Path(path)
+
+    def fmt(value: float | None, signed_precision: str = ".2f") -> str:
+        return "" if value is None else f"{value:{signed_precision}}"
+
+    with path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(MERGED_CSV_COLUMNS)
+        for r in rows:
+            pr, eb = r.pricerunner, r.ebay
+            writer.writerow([
+                r.product.name, f"{r.product.price:.2f}",
+                fmt(pr.market_price if pr else None), fmt(r.pricerunner_gap),
+                fmt(eb.market_price if eb else None),
+                fmt(eb.diff_abs if eb else None),
+                fmt(r.net_profit(fees_pct, postage)),
+                eb.n_listings if eb else "",
+                r.product.url,
+                pr.market_url if pr else "",
+                eb.market_url if eb else "",
+            ])
+    return path

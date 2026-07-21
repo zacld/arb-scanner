@@ -15,7 +15,8 @@ extra comparison target.
 pip install -r requirements.txt
 
 # See the full pipeline run offline on bundled fixture data (no keys needed).
-# Runs both comparators side by side; --comparator ebay|pricerunner for one.
+# Default output is the merged report: one row per product with PriceRunner
+# and eBay columns side by side; --comparator ebay|pricerunner runs just one.
 python -m arbfinder demo
 ```
 
@@ -50,7 +51,7 @@ Useful flags:
 
 | Flag | Meaning |
 |---|---|
-| `--comparator pricerunner\|ebay` | Price source (default `pricerunner`, no auth; `ebay` needs API credentials) |
+| `--comparator both\|pricerunner\|ebay` | Default `both`: runs every comparator and merges to one row per product (missing eBay creds just leave those columns empty). Name one to run it alone. |
 | `--fetch-ean` | Visit each product page to extract the EAN for barcode-exact matching (slower — one extra request per product) |
 | `--min-diff-pct N` | Only report rows where the marketplace is ≥ N% above the Argos price |
 | `--sort net\|abs\|pct` | Sort by estimated net profit (default), £ gap, or % gap |
@@ -62,12 +63,13 @@ Useful flags:
 | `--out FILE` | CSV output path (default `results.csv`) |
 
 Results are printed as a table and written to CSV, sorted by estimated net
-profit: `market_price − argos_price − (market_price × fees%) − postage`.
-Net profit is only computed for resale marketplaces (eBay), where the
-comparable is something you could actually sell at; PriceRunner rows show
-`N/A (retail comparison only)` because its prices are retailer asks — a raw
-gap there means "cheaper/dearer elsewhere at retail", not sale proceeds.
-Rows with negative net profit still appear, sorted to the bottom.
+profit: `ebay_price − argos_price − (ebay_price × fees%) − postage`.
+Net profit is only computed off the eBay resale price, since PriceRunner
+prices are retailer asks, not sale proceeds — the merged report shows the
+PriceRunner gap in its own column as a buy-side signal. Rows without an
+eBay match keep their PriceRunner columns but leave net blank (`—`), and
+sort after all netted rows, ordered by PriceRunner gap. Rows with negative
+net profit still appear, sorted to the bottom.
 
 ## How it works
 

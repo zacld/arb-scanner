@@ -14,8 +14,15 @@ import logging
 import os
 import sys
 
-from .pipeline import compare_products
-from .report import format_table, sort_comparisons, write_csv
+from .pipeline import compare_products, compare_products_multi
+from .report import (
+    format_merged_table,
+    format_table,
+    sort_comparisons,
+    sort_merged,
+    write_csv,
+    write_merged_csv,
+)
 
 
 def _output(comparisons, args, out_path=None) -> None:
@@ -30,6 +37,22 @@ def _output(comparisons, args, out_path=None) -> None:
     print(format_table(comparisons, fees_pct=args.fees, postage=args.postage))
     path = write_csv(comparisons, out_path or args.out, fees_pct=args.fees, postage=args.postage)
     print(f"\n{len(comparisons)} result(s) written to {path}")
+
+
+def _output_merged(rows, args) -> None:
+    if args.sort != "net":
+        print("(note: the merged report always sorts by net profit, "
+              "with PriceRunner gap as the tiebreaker)")
+    rows = sort_merged(rows, fees_pct=args.fees, postage=args.postage)
+    if args.min_diff_pct is not None:
+        rows = [r for r in rows
+                if r.best_diff_pct is not None and r.best_diff_pct >= args.min_diff_pct]
+    if not rows:
+        print("No comparisons produced (no products scraped, or too few credible matches).")
+        return
+    print(format_merged_table(rows, fees_pct=args.fees, postage=args.postage))
+    path = write_merged_csv(rows, args.out, fees_pct=args.fees, postage=args.postage)
+    print(f"\n{len(rows)} result(s) written to {path}")
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -58,9 +81,11 @@ def main(argv: list[str] | None = None) -> int:
 
     scan = sub.add_parser("scan", help="Scrape a live Argos URL and compare against a marketplace")
     scan.add_argument("url", help="Argos search or category URL")
-    scan.add_argument("--comparator", choices=["pricerunner", "ebay"], default="pricerunner",
-                      help="Price source: pricerunner needs no API key (default); "
-                           "ebay needs EBAY_CLIENT_ID/EBAY_CLIENT_SECRET")
+    scan.add_argument("--comparator", choices=["both", "pricerunner", "ebay"], default="both",
+                      help="Which price source(s) to check. Default 'both' merges "
+                           "PriceRunner and eBay into one row per product; name one "
+                           "to run it alone. ebay needs EBAY_CLIENT_ID/EBAY_CLIENT_SECRET "
+                           "(missing creds in 'both' mode just drops the eBay columns)")
     scan.add_argument("--max-products", type=int, default=25)
     scan.add_argument("--fetch-ean", action="store_true",
                       help="Visit each product page to extract the EAN (slower, better matching)")
@@ -71,7 +96,8 @@ def main(argv: list[str] | None = None) -> int:
 
     demo = sub.add_parser("demo", help="Run the full pipeline on bundled fixtures (offline)")
     demo.add_argument("--comparator", choices=["both", "ebay", "pricerunner"], default="both",
-                      help="Which comparator fixture(s) to run (default: both)")
+                      help="Which comparator fixture(s) to run; 'both' (default) "
+                           "produces the merged one-row-per-product report")
     _add_common(demo)
 
     args = parser.parse_args(argv)
@@ -85,27 +111,33 @@ def main(argv: list[str] | None = None) -> int:
         products = demo_products()
         print(f"[demo] Parsed {len(products)} products from bundled Argos fixture "
               f"(same parser as live scans)\n")
-        clients = {"ebay": DemoEbayClient, "pricerunner": DemoPriceRunnerClient}
-        selected = list(clients) if args.comparator == "both" else [args.comparator]
-        for name in selected:
-            print(f"=== comparator: {name} ===")
-            comparisons = compare_products(
-                products, clients[name](),
+        if args.comparator == "both":
+            rows = compare_products_multi(
+                products, [DemoPriceRunnerClient(), DemoEbayClient()],
                 min_score=args.min_score, min_listings=args.min_listings,
             )
-            out = args.out
-            if len(selected) > 1:
-                root, dot, ext = args.out.rpartition(".")
-                out = f"{root}-{name}{dot}{ext}" if dot else f"{args.out}-{name}"
-            _output(comparisons, args, out_path=out)
-            print()
+            _output_merged(rows, args)
+        else:
+            client = {"ebay": DemoEbayClient, "pricerunner": DemoPriceRunnerClient}[args.comparator]()
+            comparisons = compare_products(
+                products, client, min_score=args.min_score, min_listings=args.min_listings,
+            )
+            _output(comparisons, args)
         return 0
 
     # live scan
-    if args.comparator == "ebay":
-        client_id = os.environ.get("EBAY_CLIENT_ID")
-        client_secret = os.environ.get("EBAY_CLIENT_SECRET")
-        if not client_id or not client_secret:
+    wanted = ["pricerunner", "ebay"] if args.comparator == "both" else [args.comparator]
+    client_id = os.environ.get("EBAY_CLIENT_ID")
+    client_secret = os.environ.get("EBAY_CLIENT_SECRET")
+    if "ebay" in wanted and (not client_id or not client_secret):
+        if args.comparator == "both":
+            print(
+                "EBAY_CLIENT_ID / EBAY_CLIENT_SECRET not set — continuing with "
+                "PriceRunner only (eBay columns will be empty).",
+                file=sys.stderr,
+            )
+            wanted.remove("ebay")
+        else:
             print(
                 "EBAY_CLIENT_ID / EBAY_CLIENT_SECRET not set.\n"
                 "Register a (free) app at https://developer.ebay.com/my/keys and export both,\n"
@@ -123,18 +155,27 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Scraping {args.url} …")
     products = scraper.scrape(args.url, max_products=args.max_products, fetch_ean=args.fetch_ean)
 
-    if args.comparator == "ebay":
-        from .comparators.ebay import EbayBrowseClient
-        client = EbayBrowseClient(client_id, client_secret, env=args.ebay_env)
+    clients = []
+    for name in wanted:
+        if name == "ebay":
+            from .comparators.ebay import EbayBrowseClient
+            clients.append(EbayBrowseClient(client_id, client_secret, env=args.ebay_env))
+        else:
+            from .comparators.pricerunner import PriceRunnerClient
+            # Shares the session so PriceRunner requests get the same politeness rules.
+            clients.append(PriceRunnerClient(session))
+    print(f"Scraped {len(products)} products. Searching {', '.join(wanted)} …")
+
+    if args.comparator == "both":
+        rows = compare_products_multi(
+            products, clients, min_score=args.min_score, min_listings=args.min_listings
+        )
+        _output_merged(rows, args)
     else:
-        from .comparators.pricerunner import PriceRunnerClient
-        # Shares the session so PriceRunner requests get the same politeness rules.
-        client = PriceRunnerClient(session)
-    print(f"Scraped {len(products)} products. Searching {args.comparator} …")
-    comparisons = compare_products(
-        products, client, min_score=args.min_score, min_listings=args.min_listings
-    )
-    _output(comparisons, args)
+        comparisons = compare_products(
+            products, clients[0], min_score=args.min_score, min_listings=args.min_listings
+        )
+        _output(comparisons, args)
     return 0
 
 
