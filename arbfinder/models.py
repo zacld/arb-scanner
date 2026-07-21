@@ -28,6 +28,7 @@ class ComparableListing:
     shipping: float
     url: str
     condition: str = ""
+    seller: str = ""  # retailer/merchant name, when the source provides it
 
     @property
     def total(self) -> float:

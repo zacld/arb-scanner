@@ -81,11 +81,13 @@ def main(argv: list[str] | None = None) -> int:
 
     scan = sub.add_parser("scan", help="Scrape a live Argos URL and compare against a marketplace")
     scan.add_argument("url", help="Argos search or category URL")
-    scan.add_argument("--comparator", choices=["both", "pricerunner", "ebay"], default="both",
-                      help="Which price source(s) to check. Default 'both' merges "
-                           "PriceRunner and eBay into one row per product; name one "
-                           "to run it alone. ebay needs EBAY_CLIENT_ID/EBAY_CLIENT_SECRET "
-                           "(missing creds in 'both' mode just drops the eBay columns)")
+    scan.add_argument("--comparator", choices=["google", "both", "pricerunner", "ebay"],
+                      default="google",
+                      help="Price source. 'google' (default): Google Shopping via a real "
+                           "browser, no API key — what it costs across retailers. 'ebay': "
+                           "Browse API (needs EBAY_CLIENT_ID/EBAY_CLIENT_SECRET). "
+                           "'pricerunner': its private API (currently unavailable). "
+                           "'both': merge PriceRunner + eBay into one row per product.")
     scan.add_argument("--max-products", type=int, default=25)
     scan.add_argument("--fetch-ean", action="store_true",
                       help="Visit each product page to extract the EAN (slower, better matching)")
@@ -95,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--show-browser", action="store_true",
                       help="Run the Playwright fallback with a visible browser window "
                            "instead of headless (passes bot checks more reliably)")
+    scan.add_argument("--headless-compare", action="store_true",
+                      help="Run the Google Shopping comparator headless. Default is a "
+                           "visible window so its consent wall / any CAPTCHA is solvable.")
     _add_common(scan)
 
     demo = sub.add_parser("demo", help="Run the full pipeline on bundled fixtures (offline)")
@@ -166,26 +171,39 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     clients = []
+    google_client = None
     for name in wanted:
         if name == "ebay":
             from .comparators.ebay import EbayBrowseClient
             clients.append(EbayBrowseClient(client_id, client_secret, env=args.ebay_env))
+        elif name == "google":
+            from .comparators.google_shopping import GoogleShoppingClient
+            # Headed unless --headless-compare, so Google's consent wall / any
+            # CAPTCHA can be handled in the visible window.
+            google_client = GoogleShoppingClient(
+                headless=args.headless_compare, min_delay=max(args.delay, 3.0)
+            )
+            clients.append(google_client)
         else:
             from .comparators.pricerunner import PriceRunnerClient
             # Shares the session so PriceRunner requests get the same politeness rules.
             clients.append(PriceRunnerClient(session))
     print(f"Scraped {len(products)} products. Searching {', '.join(wanted)} …")
 
-    if args.comparator == "both":
-        rows = compare_products_multi(
-            products, clients, min_score=args.min_score, min_listings=args.min_listings
-        )
-        _output_merged(rows, args)
-    else:
-        comparisons = compare_products(
-            products, clients[0], min_score=args.min_score, min_listings=args.min_listings
-        )
-        _output(comparisons, args)
+    try:
+        if args.comparator == "both":
+            rows = compare_products_multi(
+                products, clients, min_score=args.min_score, min_listings=args.min_listings
+            )
+            _output_merged(rows, args)
+        else:
+            comparisons = compare_products(
+                products, clients[0], min_score=args.min_score, min_listings=args.min_listings
+            )
+            _output(comparisons, args)
+    finally:
+        if google_client is not None:
+            google_client.close()
     return 0
 
 

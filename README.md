@@ -105,6 +105,14 @@ net profit still appear, sorted to the bottom.
      products priced at the lowest current retailer offer (so one match is
      meaningful — `min_listings` defaults to 1) and the search response
      carries no delivery cost (shipping reported as 0.00).
+   - **Google Shopping** (`arbfinder/comparators/google_shopping.py`,
+     `--comparator google`, **default**, no key): drives a real browser to
+     "google the product" and reads the offer tiles — one per retailer
+     (Argos, Currys, eBay, SharkNinja…), parsed by each tile's
+     `aria-label="From <retailer>"` so it survives Google's obfuscated CSS.
+     Retail asks, so a gap means cheaper/dearer elsewhere, not resale profit.
+     Runs headed by default so Google's consent wall / any CAPTCHA is
+     solvable; spaces requests out and stops cleanly if Google throttles.
    - **eBay UK** (`arbfinder/comparators/ebay.py`, `--comparator ebay`):
      official Browse API with an application OAuth token (no user consent
      flow). EAN products are searched by `gtin` (barcode-exact); the rest by
