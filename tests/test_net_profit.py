@@ -31,6 +31,21 @@ def test_net_profit_none_for_retail_comparison():
     assert _comparison(40.0, 50.0, resale=False).net_profit(13.0, 0.0) is None
 
 
+def test_net_profit_haircut_marks_sale_price_down():
+    c = _comparison(price=40.0, market_price=100.0)
+    # 5% haircut -> sale 95; fees charged on 95: 95 - 40 - (95*10%) = 45.50
+    assert c.net_profit(fees_pct=10.0, postage=0.0, haircut_pct=5.0) == pytest.approx(45.50)
+    # 0% haircut is the previous behaviour: 100 - 40 - 10 = 50
+    assert c.net_profit(fees_pct=10.0, postage=0.0) == pytest.approx(50.0)
+
+
+def test_haircut_can_flip_a_thin_margin_negative():
+    c = _comparison(price=90.0, market_price=100.0)
+    assert c.net_profit(fees_pct=0.0, postage=0.0) == pytest.approx(10.0)
+    # a 10% haircut alone wipes the £10 gap
+    assert c.net_profit(fees_pct=0.0, postage=0.0, haircut_pct=10.0) == pytest.approx(0.0)
+
+
 def test_sort_net_puts_na_rows_after_net_rows():
     losing = _comparison(100.0, 105.0, name="losing net")       # net ≈ -8.65
     winning = _comparison(40.0, 60.0, name="winning net")       # net ≈ +12.20

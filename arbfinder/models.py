@@ -62,14 +62,20 @@ class Comparison:
             return 0.0
         return self.diff_abs / self.product.price * 100.0
 
-    def net_profit(self, fees_pct: float, postage: float) -> float | None:
+    def net_profit(
+        self, fees_pct: float, postage: float, haircut_pct: float = 0.0
+    ) -> float | None:
         """Estimated profit after selling fees and postage; None for
-        retail-comparison rows where there is no resale price to net against."""
+        retail-comparison rows where there is no resale price to net against.
+
+        ``haircut_pct`` conservatively marks the expected sale price *down* from
+        the median asking price (you rarely sell at the very top of the range,
+        and you undercut to move stock); fees are charged on that lower price.
+        """
         if not self.resale_market:
             return None
-        return self.market_price - self.product.price - (
-            self.market_price * fees_pct / 100.0
-        ) - postage
+        sale = self.market_price * (1.0 - haircut_pct / 100.0)
+        return sale - self.product.price - (sale * fees_pct / 100.0) - postage
 
 
 @dataclass
@@ -80,11 +86,13 @@ class MergedRow:
     ebay: Comparison | None = None
     pricerunner: Comparison | None = None
 
-    def net_profit(self, fees_pct: float, postage: float) -> float | None:
+    def net_profit(
+        self, fees_pct: float, postage: float, haircut_pct: float = 0.0
+    ) -> float | None:
         """Computed off the eBay resale price only; None without an eBay match."""
         if self.ebay is None:
             return None
-        return self.ebay.net_profit(fees_pct, postage)
+        return self.ebay.net_profit(fees_pct, postage, haircut_pct)
 
     @property
     def pricerunner_gap(self) -> float | None:

@@ -57,13 +57,16 @@ Useful flags:
 | `--sort net\|abs\|pct` | Sort by estimated net profit (default), £ gap, or % gap |
 | `--fees PCT` | Marketplace selling fees % used for the net-profit column (default 13, roughly eBay/Amazon average) |
 | `--postage GBP` | Flat postage cost deducted from net profit (default 0) |
+| `--haircut PCT` | Mark the expected sale price down by this % of the median asking price before computing net profit — a conservative "you won't sell at the top of the range" allowance (default 0; `5` gives `market_price × 0.95`) |
 | `--min-listings N` | Require ≥ N credible matches before trusting a price (default: comparator's own — 3 for eBay, 1 for PriceRunner) |
 | `--min-score N` | Fuzzy title-match threshold, 0–100 (default 85) |
 | `--delay N` | Minimum seconds between requests to the same host (default 2.5) |
 | `--out FILE` | CSV output path (default `results.csv`) |
 
 Results are printed as a table and written to CSV, sorted by estimated net
-profit: `ebay_price − argos_price − (ebay_price × fees%) − postage`.
+profit: `sale − argos_price − (sale × fees%) − postage`, where
+`sale = ebay_price × (1 − haircut%)` (with `--haircut 0`, the default, `sale`
+is just the median eBay price).
 Net profit is only computed off the eBay resale price, since PriceRunner
 prices are retailer asks, not sale proceeds — the merged report shows the
 PriceRunner gap in its own column as a buy-side signal. Rows without an
@@ -117,11 +120,23 @@ net profit still appear, sorted to the bottom.
      official Browse API with an application OAuth token (no user consent
      flow). EAN products are searched by `gtin` (barcode-exact); the rest by
      cleaned title, filtered to GB delivery, GBP, fixed-price, new condition.
-3. **Match & filter** (`arbfinder/matching.py`). Titles are normalised
-   (lowercase, strip pack sizes, punctuation, marketing filler) and compared
-   with rapidfuzz `token_set_ratio`; title-search results below the threshold
-   (default 85) are dropped — this is what keeps "Case for Sony WH-CH520"
-   out of the Sony WH-CH520 price. Note the Browse API covers **active**
+3. **Match & filter** (`arbfinder/matching.py`), in order of trust:
+   - **Multipacks are discarded** (2-pack, twin pack, bundle of 3, x4 …)
+     whenever the Argos product is a single unit — a multipack's price is a
+     multiple of one unit's and would otherwise inflate the median.
+   - **The model number wins** when the product has one (Argos exposes it as
+     `partNumber`/`modelNumber`). An exact model in the listing title
+     (punctuation-insensitive, so `WH-CH520` == `WHCH520`) is trusted no
+     matter the fuzzy score; a *different* model from the same family
+     (`AF300UK` when we want `AF100UK`) is rejected outright, which is what
+     stops a dearer capacity/variant from polluting the price.
+   - **Otherwise fuzzy title match.** Titles are normalised (lowercase, strip
+     pack sizes, punctuation, marketing filler) and compared with rapidfuzz
+     `token_set_ratio`; title-search results below the threshold (default 85)
+     are dropped — this keeps "Case for Sony WH-CH520" out of the
+     Sony WH-CH520 price.
+
+   Note the Browse API covers **active**
    listings; sold-price history needs eBay's restricted Marketplace Insights
    API, so "eBay price" here = median delivered price (item + postage) of
    credible active listings, which resists junk outliers on both ends.

@@ -21,6 +21,7 @@ def sort_comparisons(
     by: str = "net",
     fees_pct: float = 13.0,
     postage: float = 0.0,
+    haircut_pct: float = 0.0,
 ) -> list[Comparison]:
     """Sort results best-first.
 
@@ -34,7 +35,7 @@ def sort_comparisons(
         key = lambda c: (0, c.diff_abs)  # noqa: E731
     else:
         def key(c: Comparison):
-            net = c.net_profit(fees_pct, postage)
+            net = c.net_profit(fees_pct, postage, haircut_pct)
             return (1, net) if net is not None else (0, c.diff_abs)
     return sorted(comparisons, key=key, reverse=True)
 
@@ -44,13 +45,14 @@ def write_csv(
     path: str | Path,
     fees_pct: float = 13.0,
     postage: float = 0.0,
+    haircut_pct: float = 0.0,
 ) -> Path:
     path = Path(path)
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(CSV_COLUMNS)
         for c in comparisons:
-            net = c.net_profit(fees_pct, postage)
+            net = c.net_profit(fees_pct, postage, haircut_pct)
             writer.writerow([
                 c.product.name, c.product.source, f"{c.product.price:.2f}",
                 c.market, f"{c.market_price:.2f}", f"{c.diff_abs:.2f}",
@@ -71,6 +73,7 @@ def format_table(
     name_width: int = 44,
     fees_pct: float = 13.0,
     postage: float = 0.0,
+    haircut_pct: float = 0.0,
 ) -> str:
     market = comparisons[0].market if comparisons else "market"
     market_col = f"{market} £"
@@ -82,7 +85,7 @@ def format_table(
     lines = [header, "-" * len(header)]
     any_na = False
     for c in comparisons:
-        net = c.net_profit(fees_pct, postage)
+        net = c.net_profit(fees_pct, postage, haircut_pct)
         if net is None:
             any_na = True
             net_cell = f"{'N/A':>8}"
@@ -95,7 +98,10 @@ def format_table(
             f"{c.n_listings:>3}  {c.matched_by:<5}"
         )
     if comparisons and not any_na:
-        lines.append(f"(net = after {fees_pct:g}% selling fees + £{postage:.2f} postage)")
+        lines.append(
+            f"(net = after {fees_pct:g}% selling fees + £{postage:.2f} postage"
+            + (f", on a {haircut_pct:g}%-haircut sale price)" if haircut_pct else ")")
+        )
     if any_na:
         lines.append(
             "(N/A = retail comparison only — prices are asks, not resale value)"
@@ -119,11 +125,12 @@ def sort_merged(
     rows: list[MergedRow],
     fees_pct: float = 13.0,
     postage: float = 0.0,
+    haircut_pct: float = 0.0,
 ) -> list[MergedRow]:
     """Net profit descending; rows without an eBay match come after all rows
     that have one, ordered among themselves by PriceRunner gap."""
     def key(r: MergedRow):
-        net = r.net_profit(fees_pct, postage)
+        net = r.net_profit(fees_pct, postage, haircut_pct)
         gap = r.pricerunner_gap if r.pricerunner_gap is not None else _NEG_INF
         if net is not None:
             return (1, net, gap)
@@ -142,6 +149,7 @@ def format_merged_table(
     name_width: int = 40,
     fees_pct: float = 13.0,
     postage: float = 0.0,
+    haircut_pct: float = 0.0,
 ) -> str:
     header = (
         f"{'Product':<{name_width}}  {'Argos £':>8}  {'PRun £':>8}  {'PR gap':>8}  "
@@ -157,10 +165,11 @@ def format_merged_table(
             f"{_cell(pr.market_price if pr else None, 8)}  "
             f"{_cell(r.pricerunner_gap, 8, signed=True)}  "
             f"{_cell(eb.market_price if eb else None, 8)}  "
-            f"{_cell(r.net_profit(fees_pct, postage), 8, signed=True)}"
+            f"{_cell(r.net_profit(fees_pct, postage, haircut_pct), 8, signed=True)}"
         )
+    haircut_note = f" on a {haircut_pct:g}%-haircut sale price" if haircut_pct else ""
     lines.append(
-        f"(net = eBay resale minus {fees_pct:g}% fees + £{postage:.2f} postage; "
+        f"(net = eBay resale minus {fees_pct:g}% fees + £{postage:.2f} postage{haircut_note}; "
         f"PR gap = vs lowest retail ask, not profit; — = no match)"
     )
     return "\n".join(lines)
@@ -171,6 +180,7 @@ def write_merged_csv(
     path: str | Path,
     fees_pct: float = 13.0,
     postage: float = 0.0,
+    haircut_pct: float = 0.0,
 ) -> Path:
     path = Path(path)
 
@@ -187,7 +197,7 @@ def write_merged_csv(
                 fmt(pr.market_price if pr else None), fmt(r.pricerunner_gap),
                 fmt(eb.market_price if eb else None),
                 fmt(eb.diff_abs if eb else None),
-                fmt(r.net_profit(fees_pct, postage)),
+                fmt(r.net_profit(fees_pct, postage, haircut_pct)),
                 eb.n_listings if eb else "",
                 r.product.url,
                 pr.market_url if pr else "",

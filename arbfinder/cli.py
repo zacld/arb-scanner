@@ -27,15 +27,18 @@ from .report import (
 
 def _output(comparisons, args, out_path=None) -> None:
     comparisons = sort_comparisons(
-        comparisons, by=args.sort, fees_pct=args.fees, postage=args.postage
+        comparisons, by=args.sort, fees_pct=args.fees, postage=args.postage,
+        haircut_pct=args.haircut,
     )
     if args.min_diff_pct is not None:
         comparisons = [c for c in comparisons if c.diff_pct >= args.min_diff_pct]
     if not comparisons:
         print("No comparisons produced (no products scraped, or too few credible matches).")
         return
-    print(format_table(comparisons, fees_pct=args.fees, postage=args.postage))
-    path = write_csv(comparisons, out_path or args.out, fees_pct=args.fees, postage=args.postage)
+    print(format_table(comparisons, fees_pct=args.fees, postage=args.postage,
+                       haircut_pct=args.haircut))
+    path = write_csv(comparisons, out_path or args.out, fees_pct=args.fees,
+                     postage=args.postage, haircut_pct=args.haircut)
     print(f"\n{len(comparisons)} result(s) written to {path}")
 
 
@@ -43,15 +46,18 @@ def _output_merged(rows, args) -> None:
     if args.sort != "net":
         print("(note: the merged report always sorts by net profit, "
               "with PriceRunner gap as the tiebreaker)")
-    rows = sort_merged(rows, fees_pct=args.fees, postage=args.postage)
+    rows = sort_merged(rows, fees_pct=args.fees, postage=args.postage,
+                       haircut_pct=args.haircut)
     if args.min_diff_pct is not None:
         rows = [r for r in rows
                 if r.best_diff_pct is not None and r.best_diff_pct >= args.min_diff_pct]
     if not rows:
         print("No comparisons produced (no products scraped, or too few credible matches).")
         return
-    print(format_merged_table(rows, fees_pct=args.fees, postage=args.postage))
-    path = write_merged_csv(rows, args.out, fees_pct=args.fees, postage=args.postage)
+    print(format_merged_table(rows, fees_pct=args.fees, postage=args.postage,
+                              haircut_pct=args.haircut))
+    path = write_merged_csv(rows, args.out, fees_pct=args.fees, postage=args.postage,
+                            haircut_pct=args.haircut)
     print(f"\n{len(rows)} result(s) written to {path}")
 
 
@@ -65,6 +71,11 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                         "column (default: 13, roughly eBay/Amazon average)")
     p.add_argument("--postage", type=float, default=0.0, metavar="GBP",
                    help="Flat postage cost in £ deducted from net profit (default: 0)")
+    p.add_argument("--haircut", type=float, default=0.0, metavar="PCT",
+                   help="Mark the expected sale price down by this %% of the median "
+                        "asking price before computing net profit — a conservative "
+                        "'you won't sell at the top of the range' allowance "
+                        "(default: 0; try 5 for market_price x 0.95)")
     p.add_argument("--min-diff-pct", type=float, default=None,
                    help="Only show rows where eBay is at least this %% above the retail price")
     p.add_argument("--min-listings", type=int, default=None,
