@@ -3,4 +3,7 @@ __pycache__/
 .env
 results*.csv
 debug_argos_page.html
+pricerunner_probe/
+probe_page.html
+.arbfinder-gprofile/
 .pytest_cache/

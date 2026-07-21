@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 import time
+from pathlib import Path
 from urllib.parse import quote_plus
 
 from bs4 import BeautifulSoup
@@ -31,6 +33,14 @@ from ..models import ComparableListing
 log = logging.getLogger(__name__)
 
 SEARCH_URL = "https://www.google.com/search?tbm=shop&hl=en-GB&gl=uk&q={q}"
+CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+# Persist consent/verification between searches AND between runs, so a CAPTCHA
+# solved once keeps the whole session (and later sessions) unblocked.
+PROFILE_DIR = Path.home() / ".arbfinder-gprofile"
+_STEALTH_JS = "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
 
 _FULL_PRICE = re.compile(r"^£\s?([\d,]+(?:\.\d{2})?)$")
 _ANY_PRICE = re.compile(r"£\s?[\d,]+")
@@ -114,15 +124,19 @@ class GoogleShoppingClient:
     resale_market = False  # retailer asks, not resale value
     default_min_listings = 2  # a couple of retailers = a believable market
 
-    def __init__(self, headless: bool = False, min_delay: float = 3.5, timeout_s: float = 45.0):
+    def __init__(self, headless: bool = False, min_delay: float = 3.5, timeout_s: float = 45.0,
+                 interactive: bool | None = None):
         self.headless = headless
         self.min_delay = min_delay
         self.timeout_s = timeout_s
+        # Allow a manual CAPTCHA solve only when headed and attached to a TTY.
+        self.interactive = (not headless and sys.stdin.isatty()) if interactive is None else interactive
         self._pw = None
-        self._browser = None
+        self._ctx = None
         self._page = None
         self._consented = False
         self._blocked = False
+        self._prompted = False
         self._last = 0.0
         self.unavailable_reason: str | None = None
 
@@ -144,10 +158,20 @@ class GoogleShoppingClient:
             return False
         try:
             self._pw = sync_playwright().start()
-            self._browser = self._pw.chromium.launch(headless=self.headless)
-            ctx = self._browser.new_context(locale="en-GB",
-                                            viewport={"width": 1366, "height": 850})
-            self._page = ctx.new_page()
+            # A persistent context keeps cookies/consent between searches and
+            # runs; the stealth flag + init script hide the automation tell
+            # that trips Google's "unusual traffic" wall.
+            PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+            self._ctx = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(PROFILE_DIR),
+                headless=self.headless,
+                locale="en-GB",
+                user_agent=CHROME_UA,
+                viewport={"width": 1366, "height": 850},
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            self._ctx.add_init_script(_STEALTH_JS)
+            self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
             return True
         except Exception as exc:  # noqa: BLE001
             self.unavailable_reason = f"Could not launch Chromium: {exc}"
@@ -209,13 +233,30 @@ class GoogleShoppingClient:
         html = self._content()
         if html is None:
             return []
-        if _looks_blocked(html):
-            self._blocked = True
-            log.warning(
-                "Google is showing a CAPTCHA / 'unusual traffic' page. Solve it "
-                "in the browser window, then re-run; stopping Google lookups for now."
-            )
-            return []
+
+        if html is not None and _looks_blocked(html):
+            # Give the user one chance to solve it by hand; the persistent
+            # profile then keeps the session unblocked for the rest of the run.
+            if self.interactive and not self._prompted:
+                self._prompted = True
+                print(
+                    "\n>>> Google is showing a CAPTCHA / 'unusual traffic' check.\n"
+                    ">>> Solve it in the browser window (tick the box / pick images),\n"
+                    ">>> wait for product results to appear, then press Enter here...",
+                    file=sys.stderr,
+                )
+                try:
+                    input()
+                except EOFError:
+                    pass
+                html = self._content()
+            if html is None or _looks_blocked(html):
+                self._blocked = True
+                log.warning(
+                    "Google is still showing a CAPTCHA; stopping Google lookups for "
+                    "this run. Prices already solved this session are kept."
+                )
+                return []
         results = parse_shopping_results(html)
         for r in results:
             if not r.url:
@@ -223,10 +264,10 @@ class GoogleShoppingClient:
         return results[:limit]
 
     def close(self) -> None:
-        for closer in (lambda: self._browser and self._browser.close(),
+        for closer in (lambda: self._ctx and self._ctx.close(),
                        lambda: self._pw and self._pw.stop()):
             try:
                 closer()
             except Exception:  # noqa: BLE001
                 pass
-        self._pw = self._browser = self._page = None
+        self._pw = self._ctx = self._page = None
