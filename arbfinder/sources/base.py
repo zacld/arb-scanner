@@ -10,6 +10,7 @@ a parser.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -87,13 +88,22 @@ JINA_ENDPOINT = "https://r.jina.ai/"
 
 
 def jina_fetch(url: str, session: PoliteSession, timeout: float = 90.0) -> str | None:
-    """Fetch a URL's rendered HTML through Jina Reader; None on failure."""
+    """Fetch a URL's rendered HTML through Jina Reader; None on failure.
+
+    Set JINA_API_KEY (free at https://jina.ai/reader) to unlock the browser
+    engine — needed to render JS-heavy sites like Argos. Without a key Jina
+    now returns 401 for this request.
+    """
+    headers = {"X-Return-Format": "html", "Accept": "text/html"}
+    key = os.environ.get("JINA_API_KEY")
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+        headers["X-Engine"] = "browser"  # full JS rendering (needs the key)
     try:
         resp = session.get(
             JINA_ENDPOINT + url,
             respect_robots=False,  # we're calling Jina, not the target site
-            headers={"X-Return-Format": "html", "X-Engine": "browser",
-                     "Accept": "text/html"},
+            headers=headers,
             timeout=timeout,
         )
     except Exception as exc:  # noqa: BLE001
@@ -101,7 +111,13 @@ def jina_fetch(url: str, session: PoliteSession, timeout: float = 90.0) -> str |
         return None
     if resp.status_code == 200 and resp.text:
         return resp.text
-    log.warning("Jina Reader returned HTTP %s for %s", resp.status_code, url)
+    if resp.status_code == 401:
+        log.warning(
+            "Jina Reader needs a (free) API key: get one at https://jina.ai/reader "
+            "and export it as JINA_API_KEY, then re-run."
+        )
+    else:
+        log.warning("Jina Reader returned HTTP %s for %s", resp.status_code, url)
     return None
 
 
@@ -157,8 +173,9 @@ class BrowserBackedScraper:
             if not products:
                 raise ScrapeBlocked(
                     f"Could not scrape {self.source.label} via Jina Reader ({url}).\n"
-                    + ("Jina Reader returned no page (rate-limited or the site blocked "
-                       "it too). Try again shortly, or drop --via jina to use the local "
+                    + ("Jina Reader returned no page — most often a missing/expired key "
+                       "(get a free one at https://jina.ai/reader and export JINA_API_KEY), "
+                       "or it was rate-limited/blocked. Or drop --via jina for the local "
                        "browser." if not html else
                        f"Jina returned a page but no products parsed"
                        + ("" if self.source.verified else
