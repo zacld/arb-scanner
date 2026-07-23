@@ -64,14 +64,26 @@ PAGE = """<!doctype html>
 <h1>retail-arbitrage-finder</h1>
 <p class="sub">Scrape a UK retail search page, compare prices elsewhere, surface the gaps.</p>
 <form method="post" action="/scan" enctype="multipart/form-data">
- <label class="wide">① Saved search page (HTML)
-  <span style="font-weight:400">— open a retailer's results page in your browser, save it
-   (Chrome: Cmd+S → "Webpage, HTML Only" · Safari: "Page Source"), then choose it here.
-   This is the reliable route past bot protection.</span>
+ <label class="wide">① Search term — type a product and scan it live
+  <input name="url" placeholder="air fryer" value="{url}"></label>
+ <label>Fetch via
+  <select name="fetch_mode">
+   <option value="chrome" {fm_chrome}>My Chrome (autonomous — recommended)</option>
+   <option value="browser" {fm_browser}>Fresh browser (often blocked by Akamai)</option>
+  </select></label>
+ <label>My Chrome debug URL <span style="font-weight:400">(for “My Chrome”)</span>
+  <input name="cdp_url" value="{cdp_url}"></label>
+ <p class="note">“My Chrome”: launch Chrome with the debug port once
+    (double-click <code>scripts/chrome-debug.command</code>, or run it), browse the
+    retailer in that window so it clears the bot check, then scan — the tool reuses
+    that cleared session. No file to save.</p>
+ <label class="wide">… or upload a saved search page (HTML) instead
+  <span style="font-weight:400">— always-works fallback: open a retailer's results page,
+   save it (Chrome: Cmd+S → "Webpage, HTML Only" · Safari: "Page Source"), choose it here.</span>
   <input type="file" name="page" accept=".html,.htm,text/html"></label>
- <label>② Which retailer is the page from?
+ <label>Which retailer?
   <select name="source">{source_options}</select></label>
- <label>③ Compare against
+ <label>Compare against
   <select name="comparator">
    <option value="ebay" {e_sel}>eBay UK — needs key, gives resale + Net £</option>
    <option value="google" {g_sel}>Google Shopping — no key, opens a browser</option>
@@ -87,6 +99,8 @@ PAGE = """<!doctype html>
   <input name="fees" type="number" step="0.5" value="{fees}"></label>
  <label>Postage £ <span style="font-weight:400">(bulky items ~£6–10)</span>
   <input name="postage" type="number" step="0.01" value="{postage}"></label>
+ <label>Min net £ <span style="font-weight:400">(blank = show all · 0 = anything profitable)</span>
+  <input name="min_net" type="number" step="0.01" value="{min_net}"></label>
  <label>eBay Client ID <span style="font-weight:400">(App ID — only for eBay)</span>
   <input name="ebay_id" autocomplete="off" value="{ebay_id}"></label>
  <label>eBay Client Secret <span style="font-weight:400">(Cert ID — stays on this machine)</span>
@@ -94,10 +108,6 @@ PAGE = """<!doctype html>
  <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:400">
   <input type="checkbox" name="remember" value="1" {remember_chk} style="width:auto">
   Remember these on this machine (saved unencrypted to {config_path})</label>
- <details class="wide"><summary style="cursor:pointer;font-size:.85rem;color:#888">
-   Advanced: live search instead of a saved page (often blocked by Akamai)</summary>
-  <label style="margin-top:.5rem">Search term — tries to fetch the site live
-   <input name="url" placeholder="air fryer" value="{url}"></label></details>
  <p class="note">Runs locally on 127.0.0.1. Credentials are sent only to eBay's API.
     {saved_note}</p>
  <button type="submit">Run scan</button>
@@ -151,12 +161,21 @@ def _run_scan(form, files=None) -> str:
     query = form.get("url", "").strip()
     comparator = form.get("comparator", "ebay")
     source = form.get("source") if form.get("source") in SOURCES else "argos"
+    fetch_mode = form.get("fetch_mode") or "chrome"
+    cdp_url = form.get("cdp_url", "").strip() or "http://127.0.0.1:9222"
     try:
         max_products = int(form.get("max_products") or 10)
         fees = float(form.get("fees") or 13)
         postage = float(form.get("postage") or 0)
     except ValueError:
         return '<p class="err">Max products, fees and postage must be numbers.</p>'
+    min_net = None
+    raw_min_net = form.get("min_net", "").strip()
+    if raw_min_net:
+        try:
+            min_net = float(raw_min_net)
+        except ValueError:
+            return '<p class="err">Min net £ must be a number (or left blank).</p>'
 
     upload = files.get("page")
     upload_html = ""
@@ -166,8 +185,8 @@ def _run_scan(form, files=None) -> str:
         except Exception as exc:  # noqa: BLE001
             return f'<p class="err">Could not read the uploaded file: {html.escape(str(exc))}</p>'
     if not upload_html and not query:
-        return ('<p class="err">Upload a saved search page (recommended), or open '
-                '“Advanced” and enter a live search term.</p>')
+        return ('<p class="err">Enter a search term to scan live (recommended), or '
+                'upload a saved search page.</p>')
 
     # -- build the comparator ------------------------------------------------
     if comparator == "ebay":
@@ -203,20 +222,51 @@ def _run_scan(form, files=None) -> str:
         else:
             from .browser import BrowserFetcher
             from .http import PoliteSession
-            scraper = make_scraper(source, PoliteSession(), BrowserFetcher(headless=False))
+            if fetch_mode == "chrome":
+                # Drive the user's own already-cleared Chrome over CDP — the
+                # autonomous route past Akamai. Force the browser fetch path.
+                fetcher = BrowserFetcher(cdp_url=cdp_url)
+                scraper = make_scraper(source, PoliteSession(), fetcher, fetch_mode="browser")
+                via = "your Chrome"
+            else:
+                fetcher = BrowserFetcher(headless=False)
+                scraper = make_scraper(source, PoliteSession(), fetcher)
+                via = "a fresh browser"
             try:
                 products = scraper.scrape(query, max_products=max_products)
             except ScrapeBlocked as exc:
+                hint = (
+                    'For “My Chrome”: launch it with the debug port '
+                    '(<code>scripts/chrome-debug.command</code>) and browse the retailer '
+                    'once in that window first. '
+                    if fetch_mode == "chrome" else
+                    'A fresh browser is usually blocked — switch “Fetch via” to “My Chrome”, '
+                    'or save the page and upload it. '
+                )
                 return (f'<p class="err">{html.escape(str(exc).splitlines()[-1])}<br><br>'
-                        'Live fetching is usually blocked — save the page in your browser '
-                        'and upload it instead.</p>')
-            note = f"Scraped {len(products)} products live from {SOURCES[source].label}"
+                        f'{hint}</p>')
+            finally:
+                try:
+                    fetcher.close()
+                except Exception:  # noqa: BLE001 - teardown is best-effort
+                    pass
+            note = f"Scraped {len(products)} products live from {SOURCES[source].label} via {via}"
 
         comparisons = sort_comparisons(
             compare_products(products, client), fees_pct=fees, postage=postage
         )
+        prefix = f'<p class="note">{note}.</p>'
+        if min_net is not None:
+            kept = [c for c in comparisons
+                    if (n := c.net_profit(fees, postage)) is not None and n >= min_net]
+            if comparisons and not kept:
+                return (prefix + f'<p class="err">None of the {len(comparisons)} matched '
+                        f'product(s) clear a net profit of £{min_net:.2f} after {fees:g}% fees '
+                        f'+ £{postage:.2f} postage. Lower the threshold or postage.</p>')
+            comparisons = kept
+            prefix += f'<p class="note">Showing only rows with net ≥ £{min_net:.2f}.</p>'
         market = getattr(client, "market_name", comparator)
-        return f'<p class="note">{note}.</p>' + _results_table(comparisons, market, fees, postage)
+        return prefix + _results_table(comparisons, market, fees, postage)
     except Exception as exc:  # noqa: BLE001 - surface any failure in the page
         log.exception("scan failed")
         return f'<p class="err">Scan failed: {html.escape(str(exc))}</p>'
@@ -239,6 +289,7 @@ def _render(results: str = "", form=None) -> str:
     form = form or {}
     comparator = form.get("comparator", "ebay")
     env = form.get("ebay_env", "PRODUCTION")
+    fetch_mode = form.get("fetch_mode", "chrome")
     saved = config.load_credentials()
     have_secret = bool(saved["ebay_client_secret"]) or bool(form.get("ebay_secret"))
     saved_note = (
@@ -252,6 +303,10 @@ def _render(results: str = "", form=None) -> str:
         max_products=html.escape(str(form.get("max_products", "10"))),
         fees=html.escape(str(form.get("fees", "13"))),
         postage=html.escape(str(form.get("postage", "0"))),
+        min_net=html.escape(str(form.get("min_net", ""))),
+        cdp_url=html.escape(form.get("cdp_url") or "http://127.0.0.1:9222"),
+        fm_chrome="selected" if fetch_mode != "browser" else "",
+        fm_browser="selected" if fetch_mode == "browser" else "",
         # Pre-fill the Client ID from saved/env; never pre-fill the secret field.
         ebay_id=html.escape(form.get("ebay_id") or saved["ebay_client_id"]),
         secret_ph="saved secret will be used — leave blank" if have_secret else "",

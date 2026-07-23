@@ -31,8 +31,14 @@ def _output(comparisons, args, out_path=None) -> None:
     )
     if args.min_diff_pct is not None:
         comparisons = [c for c in comparisons if c.diff_pct >= args.min_diff_pct]
+    if args.min_net is not None:
+        comparisons = [
+            c for c in comparisons
+            if (n := c.net_profit(args.fees, args.postage)) is not None and n >= args.min_net
+        ]
     if not comparisons:
-        print("No comparisons produced (no products scraped, or too few credible matches).")
+        print("No comparisons produced (no products scraped, too few credible matches, "
+              "or none cleared --min-net).")
         return
     print(format_table(comparisons, fees_pct=args.fees, postage=args.postage))
     path = write_csv(comparisons, out_path or args.out, fees_pct=args.fees, postage=args.postage)
@@ -47,8 +53,14 @@ def _output_merged(rows, args) -> None:
     if args.min_diff_pct is not None:
         rows = [r for r in rows
                 if r.best_diff_pct is not None and r.best_diff_pct >= args.min_diff_pct]
+    if args.min_net is not None:
+        rows = [
+            r for r in rows
+            if (n := r.net_profit(args.fees, args.postage)) is not None and n >= args.min_net
+        ]
     if not rows:
-        print("No comparisons produced (no products scraped, or too few credible matches).")
+        print("No comparisons produced (no products scraped, too few credible matches, "
+              "or none cleared --min-net).")
         return
     print(format_merged_table(rows, fees_pct=args.fees, postage=args.postage))
     path = write_merged_csv(rows, args.out, fees_pct=args.fees, postage=args.postage)
@@ -67,6 +79,10 @@ def _add_common(p: argparse.ArgumentParser) -> None:
                    help="Flat postage cost in £ deducted from net profit (default: 0)")
     p.add_argument("--min-diff-pct", type=float, default=None,
                    help="Only show rows where eBay is at least this %% above the retail price")
+    p.add_argument("--min-net", type=float, default=None, metavar="GBP",
+                   help="Only show rows whose estimated net profit is at least this many £ "
+                        "(after fees + postage). Drops rows with no net figure — so you see "
+                        "just the flips worth doing. Try --min-net 0 for 'anything profitable'.")
     p.add_argument("--min-listings", type=int, default=None,
                    help="Minimum credible matches required (default: comparator's own — "
                         "3 for eBay listings, 1 for PriceRunner's aggregated products)")

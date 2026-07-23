@@ -79,7 +79,43 @@ def test_remember_checkbox_persists_typed_credentials():
 
 def test_scan_validates_no_input():
     out = dashboard._run_scan({"url": "", "comparator": "google"}, {})
-    assert "Upload a saved search page" in out
+    assert "Enter a search term" in out
+
+
+def test_min_net_filters_out_unprofitable_rows(monkeypatch):
+    # Two ebay comparisons: one clears net, one loses money. min_net=0 keeps
+    # only the winner. Stub the scrape + compare so no network/browser is needed.
+    from arbfinder.models import Comparison, Product
+
+    class _FakeScraper:
+        def scrape(self, query, max_products=None):
+            return [Product(name="Winner", price=40.0, url="u", source="argos")]
+
+    winner = Comparison(product=Product(name="Winner", price=40.0, url="u"),
+                        market="ebay", market_price=60.0, market_url="m",
+                        n_listings=5, matched_by="title")   # net ≈ +12.20 at 13%/£0
+    loser = Comparison(product=Product(name="Loser", price=100.0, url="u"),
+                       market="ebay", market_price=101.0, market_url="m",
+                       n_listings=5, matched_by="title")    # net ≈ -12.13
+    monkeypatch.setattr(dashboard, "make_scraper", lambda *a, **k: _FakeScraper())
+    monkeypatch.setattr(dashboard, "compare_products", lambda p, c, **k: [winner, loser])
+    config.save_credentials("APPID", "SECRET")
+    out = dashboard._run_scan(
+        {"url": "air fryer", "comparator": "ebay", "source": "argos",
+         "fetch_mode": "browser", "min_net": "0"},
+    )
+    # Only the profitable row survives the filter.
+    assert "Winner" in out
+    assert "Loser" not in out
+    assert "net ≥ £0.00" in out
+
+
+def test_dashboard_offers_my_chrome_fetch_mode():
+    body = dashboard._render()
+    assert 'name="fetch_mode"' in body
+    assert "My Chrome" in body
+    assert 'name="cdp_url"' in body
+    assert 'name="min_net"' in body
 
 
 class _FakeUpload:

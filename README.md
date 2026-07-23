@@ -42,12 +42,15 @@ python -m arbfinder.dashboard
 # open http://127.0.0.1:5000
 ```
 
-**Upload a saved search page** (the reliable route past bot protection — save a
-retailer's results page from your browser), pick the **retailer** and
-**comparator** from the dropdowns, choose **eBay Production/Sandbox**, and — for
-eBay — type your Client ID / Secret. (An "Advanced" section still offers live
-search by term, but that's usually blocked by Akamai.) It **binds to 127.0.0.1 only** and
-credentials are sent only to eBay's own API.
+**Type a search term and scan live** — set **Fetch via → "My Chrome"** and the
+dashboard drives your own already-open Chrome (see *Autonomous scraping* below:
+launch it once with the debug port and browse the retailer so it clears the bot
+check). No file to save. Pick the **retailer** and **comparator** from the
+dropdowns, choose **eBay Production/Sandbox**, and — for eBay — type your Client
+ID / Secret. Set **Min net £** to hide rows that don't clear a real profit after
+fees + postage (blank = show all, `0` = anything profitable). A saved-page
+**upload** is still there as an always-works fallback. It **binds to 127.0.0.1
+only** and credentials are sent only to eBay's own API.
 
 Tick **Remember these on this machine** to save the credentials (so you don't
 retype them): they're written to `~/.arbfinder-credentials.json`, locked to
@@ -133,6 +136,7 @@ Useful flags:
 | `--comparator both\|pricerunner\|ebay` | Default `both`: runs every comparator and merges to one row per product (missing eBay creds just leave those columns empty). Name one to run it alone. |
 | `--fetch-ean` | Visit each product page to extract the EAN for barcode-exact matching (slower — one extra request per product) |
 | `--min-diff-pct N` | Only report rows where the marketplace is ≥ N% above the Argos price |
+| `--min-net GBP` | Only show rows whose estimated net profit is ≥ this £ (after fees + postage). Hides rows with no net figure — so you see just the flips worth doing. `--min-net 0` = anything profitable |
 | `--sort net\|abs\|pct` | Sort by estimated net profit (default), £ gap, or % gap |
 | `--fees PCT` | Marketplace selling fees % used for the net-profit column (default 13, roughly eBay/Amazon average) |
 | `--postage GBP` | Flat postage cost deducted from net profit (default 0) |
