@@ -80,12 +80,18 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="Search retail sites by term and compare prices elsewhere")
-    scan.add_argument("query", help="Search term (e.g. \"air fryer\") — or a full source URL")
+    scan.add_argument("query", nargs="?", help="Search term (e.g. \"air fryer\") — or a "
+                      "full source URL. Optional when --from-file is given.")
     from .sources.base import SOURCES as _SRC
     scan.add_argument("--source", action="append", choices=list(_SRC),
                       help="Retail site(s) to search; repeatable (default: argos). "
                            "Non-Argos sources are beta — parsers not yet confirmed "
                            "against their live sites.")
+    scan.add_argument("--from-file", metavar="PATH",
+                      help="Parse a page HTML file you saved from your OWN browser instead "
+                           "of fetching it. The reliable way past Akamai bot protection "
+                           "(Argos etc.): open the search page in Chrome/Safari, Save As "
+                           "'Webpage, HTML Only', then point --source's parser at it.")
     scan.add_argument("--comparator", choices=["google", "both", "pricerunner", "ebay"],
                       default="google",
                       help="Price source. 'google' (default): Google Shopping via a real "
@@ -171,24 +177,51 @@ def main(argv: list[str] | None = None) -> int:
     from .sources.base import ScrapeBlocked, SOURCES, make_scraper
 
     sources = args.source or ["argos"]
-    session = PoliteSession(min_delay=args.delay)
-    browser = BrowserFetcher(headless=not args.show_browser,
-                             min_delay=args.delay) if args.show_browser else None
     products = []
-    for name in sources:
-        target = args.query
-        pretty = target if target.startswith("http") else f'"{target}" on {SOURCES[name].label}'
-        print(f"Searching {pretty} …")
+
+    if args.from_file:
+        # Parse a page the user saved from their own (working) browser — the
+        # reliable way past bot protection.
+        from pathlib import Path
+        name = sources[0]
         try:
-            found = make_scraper(name, session, browser, fetch_mode=args.via).scrape(
-                args.query, max_products=args.max_products)
-            print(f"  {SOURCES[name].label}: {len(found)} products")
-            products.extend(found)
-        except ScrapeBlocked as exc:
-            print(f"  {exc}", file=sys.stderr)
-    if not products:
-        print("No products scraped from any source.", file=sys.stderr)
-        return 1
+            html = Path(args.from_file).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"Could not read {args.from_file}: {exc}", file=sys.stderr)
+            return 1
+        found = SOURCES[name].parse(html)
+        for p in found:
+            p.source = name
+        if args.max_products:
+            found = found[:args.max_products]
+        print(f"Parsed {len(found)} products from {args.from_file} ({SOURCES[name].label}).")
+        products.extend(found)
+        if not products:
+            print("No products found in that file — is it the search-results page, saved "
+                  "as HTML? For a beta source, the parser may need adjusting "
+                  "(scripts/inspect_dump.py <file>).", file=sys.stderr)
+            return 1
+    else:
+        if not args.query:
+            print("Give a search term (or a URL), or use --from-file.", file=sys.stderr)
+            return 2
+        session = PoliteSession(min_delay=args.delay)
+        browser = BrowserFetcher(headless=not args.show_browser,
+                                 min_delay=args.delay) if args.show_browser else None
+        for name in sources:
+            target = args.query
+            pretty = target if target.startswith("http") else f'"{target}" on {SOURCES[name].label}'
+            print(f"Searching {pretty} …")
+            try:
+                found = make_scraper(name, session, browser, fetch_mode=args.via).scrape(
+                    args.query, max_products=args.max_products)
+                print(f"  {SOURCES[name].label}: {len(found)} products")
+                products.extend(found)
+            except ScrapeBlocked as exc:
+                print(f"  {exc}", file=sys.stderr)
+        if not products:
+            print("No products scraped from any source.", file=sys.stderr)
+            return 1
 
     clients = []
     google_client = None

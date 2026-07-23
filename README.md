@@ -72,16 +72,27 @@ Lewis and Currys are **beta** — their parsers haven't been confirmed against
 the live sites yet (save a page with `scripts/probe_page.py` if one returns
 nothing, same as Argos was dialed in).
 
-**Blocked by "Access Denied"?** Big UK retailers (Argos etc.) use Akamai bot
-protection that rate-limits by IP and fingerprints scripted browsers. Add
-`--via jina` to fetch pages through [Jina Reader](https://jina.ai/reader)
-instead — it renders the page from *Jina's* servers and returns the HTML, so
-the request never comes from your (possibly flagged) IP or a detectable local
-browser. Free, no key, no browser needed:
+**Blocked by "Access Denied"?** Big UK retailers (Argos etc.) run Akamai bot
+protection that defeats *every* automated fetch — local scripts, headless and
+real-browser Playwright, and even third-party renderers like Jina Reader (their
+servers get blocked too). The one thing Akamai lets through is a genuine human
+browser on your own machine. So the reliable route is to save the page yourself
+and parse it:
+
+1. Open the search page in Chrome/Safari (it loads fine for you), e.g.
+   `https://www.argos.co.uk/search/air-fryer/`
+2. **Save As → "Webpage, HTML Only"** (Chrome) or **"Page Source"** (Safari),
+   say `argos.html`
+3. Parse it — no fetching, no bot wall:
 
 ```bash
-python -m arbfinder scan "air fryer" --via jina --comparator google
+python -m arbfinder scan --from-file argos.html --source argos --comparator google
 ```
+
+Other fetch modes exist (`--via jina` routes through
+[Jina Reader](https://jina.ai/reader) with a free `JINA_API_KEY`; `--show-browser`
+uses a local browser) but against Akamai-hardened sites `--from-file` is what
+actually works.
 
 To compare against eBay UK instead (once your Browse API key is approved):
 register a free app at <https://developer.ebay.com/my/keys> (Production
