@@ -32,7 +32,23 @@ Sony WH-CH520 Wireless On-Ear Headphones - …     34.99     39.72     +4.73   +
 Casio FX-83GTCW Scientific Calculator - Blue     13.99     13.50     -0.49    -3.5%    3  title
 ```
 
-## Live runs
+## Dashboard (local web UI)
+
+Prefer a browser to the command line? Run the local dashboard:
+
+```bash
+pip install -r requirements.txt
+python -m arbfinder.dashboard
+# open http://127.0.0.1:5000
+```
+
+Enter an Argos URL, pick Google Shopping (no key) or eBay, and — for eBay —
+type your Client ID / Secret into the form. It **binds to 127.0.0.1 only**;
+credentials are used in memory for that one scan and are never written to
+disk, logged, or sent anywhere except eBay's own API. A Chromium window opens
+during scraping (Argos / Google); that's expected.
+
+## Live runs (command line)
 
 No key needed — the default comparator is PriceRunner UK:
 
