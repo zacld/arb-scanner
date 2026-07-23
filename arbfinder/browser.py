@@ -64,11 +64,19 @@ class BrowserFetcher:
             return False
         try:
             self._pw = sync_playwright().start()
-            self._browser = self._pw.chromium.launch(headless=self.headless)
+            # Stealth: hide the automation flag that bot protection (Akamai on
+            # Argos) uses to serve "Access Denied" to scripted browsers.
+            self._browser = self._pw.chromium.launch(
+                headless=self.headless,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
             context = self._browser.new_context(
                 user_agent=CHROME_UA,
                 locale="en-GB",
                 viewport={"width": 1366, "height": 768},
+            )
+            context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
             )
             self._page = context.new_page()
             return True

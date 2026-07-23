@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -455,15 +456,27 @@ class ArgosScraper:
         self.browser = browser
         self._used_browser = False
 
-    def _browser_html(self, url: str) -> str | None:
-        """Fetch a rendered page via Playwright, still honouring robots.txt."""
+    def _browser_html(self, url: str, denial_retries: int = 1) -> str | None:
+        """Fetch a rendered page via Playwright, still honouring robots.txt.
+
+        Akamai's "Access Denied" is frequently transient, so a denial page is
+        retried a couple of times with a short backoff before giving up."""
         if not self.session.allowed(url):
             raise RobotsDisallowed(f"robots.txt disallows fetching {url}")
         if self.browser is None:
             self.browser = BrowserFetcher(
                 min_delay=self.session.min_delay, jitter=self.session.jitter
             )
-        return self.browser.fetch(url)
+        html = self.browser.fetch(url)
+        attempts = 0
+        while html and looks_like_denial_page(html) and attempts < denial_retries:
+            attempts += 1
+            wait = 3.0 * attempts
+            log.warning("Argos served a bot-protection page; retrying in %.0fs (%d/%d)",
+                        wait, attempts, denial_retries)
+            time.sleep(wait)
+            html = self.browser.fetch(url)
+        return html
 
     def _fetch_html(self, url: str) -> str | None:
         """Plain HTTP first; on a 4xx/5xx or an empty-looking page, fall back
@@ -508,8 +521,10 @@ class ArgosScraper:
                     reason = self.browser.unavailable_reason
                 elif html and looks_like_denial_page(html):
                     reason = (
-                        "bot protection served an Access Denied page to the "
-                        "headless browser"
+                        "Argos bot protection (Akamai) served an Access Denied page. "
+                        "This is often intermittent and IP-based — it can clear if you "
+                        "wait a few minutes and retry, especially after many scrapes in "
+                        "a row. A visible browser (CLI --show-browser) also helps."
                     )
                 else:
                     reason = "the rendered page contained no recognisable product data"
