@@ -235,26 +235,31 @@ class GoogleShoppingClient:
             return []
 
         if html is not None and _looks_blocked(html):
-            # Give the user one chance to solve it by hand; the persistent
-            # profile then keeps the session unblocked for the rest of the run.
-            if self.interactive and not self._prompted:
-                self._prompted = True
+            # Let the user solve it by hand, re-checking after each Enter so an
+            # early press isn't fatal. Once cleared, the persistent profile
+            # keeps the session unblocked for the rest of the run.
+            attempts = 0
+            while self.interactive and html is not None and _looks_blocked(html) and attempts < 5:
+                attempts += 1
                 print(
                     "\n>>> Google is showing a CAPTCHA / 'unusual traffic' check.\n"
-                    ">>> Solve it in the browser window (tick the box / pick images),\n"
-                    ">>> wait for product results to appear, then press Enter here...",
+                    ">>> In the browser window: solve it (tick the box / pick images),\n"
+                    ">>> and WAIT until you actually SEE air-fryer results on screen.\n"
+                    ">>> THEN come back here and press Enter (or type 'skip' to give up).",
                     file=sys.stderr,
                 )
                 try:
-                    input()
+                    ans = input()
                 except EOFError:
-                    pass
+                    break
+                if ans.strip().lower() == "skip":
+                    break
                 html = self._content()
             if html is None or _looks_blocked(html):
                 self._blocked = True
                 log.warning(
-                    "Google is still showing a CAPTCHA; stopping Google lookups for "
-                    "this run. Prices already solved this session are kept."
+                    "Google still blocked; stopping Google lookups for this run. "
+                    "Try again in a minute, or use --comparator ebay."
                 )
                 return []
         results = parse_shopping_results(html)
