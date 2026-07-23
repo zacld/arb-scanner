@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
@@ -46,9 +47,10 @@ class BrowserFetcher:
         self.jitter = jitter
         self.timeout_s = timeout_s
         self._pw = None
-        self._browser = None
+        self._ctx = None
         self._page = None
         self._last_nav = 0.0
+        self.channel: str | None = None
         self.unavailable_reason: str | None = None
 
     def _ensure(self) -> bool:
@@ -62,29 +64,46 @@ class BrowserFetcher:
             self.unavailable_reason = INSTALL_HINT
             log.warning(INSTALL_HINT)
             return False
-        try:
-            self._pw = sync_playwright().start()
-            # Stealth: hide the automation flag that bot protection (Akamai on
-            # Argos) uses to serve "Access Denied" to scripted browsers.
-            self._browser = self._pw.chromium.launch(
+        self._pw = sync_playwright().start()
+        # Prefer the user's REAL installed browser: Akamai fingerprints
+        # Playwright's bundled test build specifically (a plain Safari/Chrome
+        # visit from the same IP sails through), so real Chrome/Edge with a
+        # persistent profile looks like the normal browsing that works. Each
+        # channel gets its own profile dir so clearance cookies stick between
+        # runs without cross-version profile clashes.
+        last_exc: Exception | None = None
+        for channel in ("chrome", "msedge", None):
+            profile = Path.home() / f".arbfinder-profile-{channel or 'chromium'}"
+            kwargs = dict(
+                user_data_dir=str(profile),
                 headless=self.headless,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-            context = self._browser.new_context(
-                user_agent=CHROME_UA,
                 locale="en-GB",
                 viewport={"width": 1366, "height": 768},
+                args=["--disable-blink-features=AutomationControlled"],
             )
-            context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
-            )
-            self._page = context.new_page()
-            return True
-        except Exception as exc:  # noqa: BLE001 - launch failures should degrade, not crash
-            self.unavailable_reason = f"Could not launch Chromium: {exc}"
-            log.warning(self.unavailable_reason)
-            self.close()
-            return False
+            if channel:
+                kwargs["channel"] = channel  # native UA/fingerprint — don't override
+            else:
+                kwargs["user_agent"] = CHROME_UA
+            try:
+                profile.mkdir(parents=True, exist_ok=True)
+                self._ctx = self._pw.chromium.launch_persistent_context(**kwargs)
+                self._ctx.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+                )
+                self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
+                self.channel = channel or "chromium"
+                log.info("Browser fallback using %s (profile: %s)",
+                         self.channel, profile.name)
+                return True
+            except Exception as exc:  # noqa: BLE001 - try the next channel
+                last_exc = exc
+                self._ctx = self._page = None
+                continue
+        self.unavailable_reason = f"Could not launch any browser: {last_exc}"
+        log.warning(self.unavailable_reason)
+        self.close()
+        return False
 
     def _throttle(self) -> None:
         if self._last_nav:
@@ -131,11 +150,11 @@ class BrowserFetcher:
 
     def close(self) -> None:
         for closer in (
-            lambda: self._browser.close() if self._browser else None,
+            lambda: self._ctx.close() if self._ctx else None,
             lambda: self._pw.stop() if self._pw else None,
         ):
             try:
                 closer()
             except Exception:  # noqa: BLE001 - teardown is best-effort
                 pass
-        self._pw = self._browser = self._page = None
+        self._pw = self._ctx = self._page = None

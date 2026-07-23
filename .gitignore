@@ -7,3 +7,4 @@ pricerunner_probe/
 probe_page.html
 .arbfinder-gprofile/
 .pytest_cache/
+.arbfinder-profile-*/
