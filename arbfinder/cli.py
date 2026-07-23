@@ -79,8 +79,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="arbfinder", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="Scrape a live Argos URL and compare against a marketplace")
-    scan.add_argument("url", help="Argos search or category URL")
+    scan = sub.add_parser("scan", help="Search retail sites by term and compare prices elsewhere")
+    scan.add_argument("query", help="Search term (e.g. \"air fryer\") — or a full source URL")
+    scan.add_argument("--source", action="append", choices=["argos", "johnlewis"],
+                      help="Retail site(s) to search; repeatable (default: argos). "
+                           "johnlewis is beta — parser not yet confirmed against the live site.")
     scan.add_argument("--comparator", choices=["google", "both", "pricerunner", "ebay"],
                       default="google",
                       help="Price source. 'google' (default): Google Shopping via a real "
@@ -157,17 +160,26 @@ def main(argv: list[str] | None = None) -> int:
 
     from .browser import BrowserFetcher
     from .http import PoliteSession
-    from .sources.argos import ArgosScraper, ScrapeBlocked
+    from .sources.base import ScrapeBlocked, SOURCES, make_scraper
 
+    sources = args.source or ["argos"]
     session = PoliteSession(min_delay=args.delay)
     browser = BrowserFetcher(headless=not args.show_browser,
                              min_delay=args.delay) if args.show_browser else None
-    scraper = ArgosScraper(session, browser=browser)
-    print(f"Scraping {args.url} …")
-    try:
-        products = scraper.scrape(args.url, max_products=args.max_products, fetch_ean=args.fetch_ean)
-    except ScrapeBlocked as exc:
-        print(f"\n{exc}", file=sys.stderr)
+    products = []
+    for name in sources:
+        target = args.query
+        pretty = target if target.startswith("http") else f'"{target}" on {SOURCES[name].label}'
+        print(f"Searching {pretty} …")
+        try:
+            found = make_scraper(name, session, browser).scrape(
+                args.query, max_products=args.max_products)
+            print(f"  {SOURCES[name].label}: {len(found)} products")
+            products.extend(found)
+        except ScrapeBlocked as exc:
+            print(f"  {exc}", file=sys.stderr)
+    if not products:
+        print("No products scraped from any source.", file=sys.stderr)
         return 1
 
     clients = []
@@ -188,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             from .comparators.pricerunner import PriceRunnerClient
             # Shares the session so PriceRunner requests get the same politeness rules.
             clients.append(PriceRunnerClient(session))
-    print(f"Scraped {len(products)} products. Searching {', '.join(wanted)} …")
+    print(f"Scraped {len(products)} products total. Comparing on {', '.join(wanted)} …")
 
     try:
         if args.comparator == "both":

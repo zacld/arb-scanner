@@ -79,7 +79,7 @@ def test_remember_checkbox_persists_typed_credentials():
 
 def test_scan_validates_missing_url():
     out = dashboard._run_scan({"url": "", "comparator": "google"})
-    assert "Please enter an Argos URL" in out
+    assert "Please enter a search term" in out
 
 
 def test_scan_ebay_requires_credentials():

@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - guidance when Flask isn't installed
 from . import config
 from .pipeline import compare_products
 from .report import sort_comparisons
+from .sources.base import SOURCES, ScrapeBlocked, make_scraper
 
 log = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -63,9 +64,11 @@ PAGE = """<!doctype html>
 <h1>retail-arbitrage-finder</h1>
 <p class="sub">Scrape a UK retail search page, compare prices elsewhere, surface the gaps.</p>
 <form method="post" action="/scan">
- <label class="wide">Argos search / category URL
-  <input name="url" placeholder="https://www.argos.co.uk/search/air-fryer/" value="{url}" required></label>
- <label>Max products
+ <label class="wide">Search term <span style="font-weight:400">(e.g. air fryer — or paste a full URL)</span>
+  <input name="url" placeholder="air fryer" value="{url}" required></label>
+ <label class="wide">Search these sites
+  <span style="display:flex;gap:1.2rem;font-weight:400;margin-top:.3rem">{source_boxes}</span></label>
+ <label>Max products per site
   <input name="max_products" type="number" min="1" max="60" value="{max_products}"></label>
  <label>Compare against
   <select name="comparator">
@@ -103,7 +106,7 @@ def _results_table(comparisons, market: str, fees: float, postage: float) -> str
         return ('<p class="err">No comparisons produced — no products scraped, too few '
                 'credible matches, or the comparison source blocked the request. '
                 'See the terminal for details.</p>')
-    head = (f"<tr><th>Product</th><th>Argos £</th><th>{html.escape(market)} £</th>"
+    head = (f"<tr><th>Product</th><th>Source</th><th>Price £</th><th>{html.escape(market)} £</th>"
             "<th>Diff £</th><th>Diff %</th><th>Net £</th><th>N</th>"
             "<th>Match</th><th>Seller</th></tr>")
     rows = []
@@ -112,12 +115,14 @@ def _results_table(comparisons, market: str, fees: float, postage: float) -> str
         seller = ""
         if c.listings and getattr(c.listings[0], "seller", ""):
             seller = c.listings[0].seller
+        src = SOURCES[c.product.source].label if c.product.source in SOURCES else c.product.source
         name = html.escape(c.product.name)
         link = f'<a href="{html.escape(c.product.url)}" target="_blank" rel="noopener">{name}</a>'
         mlink = (f'<a href="{html.escape(c.market_url)}" target="_blank" rel="noopener">'
                  f'{c.market_price:.2f}</a>' if c.market_url else f"{c.market_price:.2f}")
         rows.append(
-            f"<tr><td>{link}</td><td>{c.product.price:.2f}</td><td>{mlink}</td>"
+            f"<tr><td>{link}</td><td>{html.escape(src)}</td><td>{c.product.price:.2f}</td>"
+            f"<td>{mlink}</td>"
             f"{_fmt_signed(c.diff_abs)}{_fmt_signed(c.diff_pct)}{_fmt_signed(net)}"
             f"<td>{c.n_listings}</td><td>{html.escape(c.matched_by)}</td>"
             f"<td>{html.escape(seller)}</td></tr>"
@@ -130,20 +135,22 @@ def _results_table(comparisons, market: str, fees: float, postage: float) -> str
 
 
 def _run_scan(form) -> str:
-    url = form.get("url", "").strip()
+    query = form.get("url", "").strip()
     comparator = form.get("comparator", "google")
+    chosen = [s for s in SOURCES if form.get(f"source_{s}")]
+    if not chosen:
+        chosen = ["argos"]
     try:
         max_products = int(form.get("max_products") or 10)
         fees = float(form.get("fees") or 13)
         postage = float(form.get("postage") or 0)
     except ValueError:
         return '<p class="err">Max products, fees and postage must be numbers.</p>'
-    if not url:
-        return '<p class="err">Please enter an Argos URL.</p>'
+    if not query:
+        return '<p class="err">Please enter a search term (e.g. air fryer).</p>'
 
     from .browser import BrowserFetcher
     from .http import PoliteSession
-    from .sources.argos import ArgosScraper, ScrapeBlocked
 
     if comparator == "ebay":
         saved = config.load_credentials()
@@ -163,23 +170,50 @@ def _run_scan(form) -> str:
         client = google = GoogleShoppingClient(headless=False, interactive=False)
 
     session = PoliteSession()
-    scraper = ArgosScraper(session, browser=BrowserFetcher(headless=False))
+    browser = BrowserFetcher(headless=False)
     try:
-        try:
-            products = scraper.scrape(url, max_products=max_products)
-        except ScrapeBlocked as exc:
-            return f'<p class="err">{html.escape(str(exc))}</p>'
+        products = []
+        notes = []
+        for name in chosen:
+            scraper = make_scraper(name, session, browser)
+            try:
+                found = scraper.scrape(query, max_products=max_products)
+                products.extend(found)
+                notes.append(f"{SOURCES[name].label}: {len(found)} products")
+            except ScrapeBlocked as exc:
+                notes.append(f'<span style="color:#c44">{SOURCES[name].label}: '
+                             f'{html.escape(str(exc).splitlines()[-1])}</span>')
+        if not products:
+            return ('<p class="err">No products scraped from '
+                    f'{", ".join(SOURCES[n].label for n in chosen)}.<br>'
+                    + "<br>".join(notes) + "</p>")
         comparisons = sort_comparisons(
             compare_products(products, client), fees_pct=fees, postage=postage
         )
         market = getattr(client, "market_name", comparator)
-        return _results_table(comparisons, market, fees, postage)
+        return (f'<p class="note">Scraped — {" · ".join(notes)}</p>'
+                + _results_table(comparisons, market, fees, postage))
     except Exception as exc:  # noqa: BLE001 - surface any failure in the page
         log.exception("scan failed")
         return f'<p class="err">Scan failed: {html.escape(str(exc))}</p>'
     finally:
         if google is not None:
             google.close()
+
+
+def _source_boxes(form) -> str:
+    chosen_any = any(form.get(f"source_{s}") for s in SOURCES)
+    boxes = []
+    for name, src in SOURCES.items():
+        checked = "checked" if (form.get(f"source_{name}")
+                                or (not chosen_any and name == "argos")) else ""
+        tag = "" if src.verified else ' <span style="color:#c93">(beta)</span>'
+        boxes.append(
+            f'<label style="flex-direction:row;align-items:center;gap:.35rem;font-weight:400">'
+            f'<input type="checkbox" name="source_{name}" value="1" {checked} '
+            f'style="width:auto">{html.escape(src.label)}{tag}</label>'
+        )
+    return "".join(boxes)
 
 
 def _render(results: str = "", form=None) -> str:
@@ -194,6 +228,7 @@ def _render(results: str = "", form=None) -> str:
     )
     return PAGE.format(
         url=html.escape(form.get("url", "")),
+        source_boxes=_source_boxes(form),
         max_products=html.escape(str(form.get("max_products", "10"))),
         fees=html.escape(str(form.get("fees", "13"))),
         postage=html.escape(str(form.get("postage", "0"))),

@@ -42,8 +42,9 @@ python -m arbfinder.dashboard
 # open http://127.0.0.1:5000
 ```
 
-Enter an Argos URL, pick Google Shopping (no key) or eBay, and — for eBay —
-type your Client ID / Secret into the form. It **binds to 127.0.0.1 only** and
+Enter a **search term** (e.g. "air fryer"), tick which sites to search
+(Argos; John Lewis is beta), pick Google Shopping (no key) or eBay, and — for
+eBay — type your Client ID / Secret into the form. It **binds to 127.0.0.1 only** and
 credentials are sent only to eBay's own API.
 
 Tick **Remember these on this machine** to save the credentials (so you don't
@@ -58,12 +59,18 @@ A Chromium window opens during scraping (Argos / Google); that's expected.
 
 ## Live runs (command line)
 
-No key needed — the default comparator is PriceRunner UK:
+Search by **term** across one or more retail sites (no URL to paste). Default
+source is Argos, default comparator is Google Shopping (no key):
 
 ```bash
-python -m arbfinder scan "https://www.argos.co.uk/search/air-fryer/" \
-    --max-products 20 --min-diff-pct 15
+python -m arbfinder scan "air fryer" --max-products 10
+python -m arbfinder scan "air fryer" --source argos --source johnlewis
 ```
+
+`--source` is repeatable. A full URL still works in place of a term. John
+Lewis is **beta** — its parser hasn't been confirmed against the live site yet
+(save a page with `scripts/probe_page.py` if it returns nothing, same as Argos
+was dialed in).
 
 To compare against eBay UK instead (once your Browse API key is approved):
 register a free app at <https://developer.ebay.com/my/keys> (Production
