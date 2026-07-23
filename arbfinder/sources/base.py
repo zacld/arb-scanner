@@ -21,7 +21,7 @@ from ..http import PoliteSession, RobotsDisallowed
 from ..models import Product
 from .argos import looks_like_denial_page
 from .argos import parse_search_page as argos_parse
-from .johnlewis import parse_search_page as johnlewis_parse
+from .generic import make_parser
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +50,25 @@ def _argos_search_url(term: str) -> str:
     return f"https://www.argos.co.uk/search/{quote(slug)}/"
 
 
-def _johnlewis_search_url(term: str) -> str:
-    return f"https://www.johnlewis.com/search?search-term={quote_plus(term.strip())}"
+def _query_url(template: str):
+    """Search-URL builder for sites that take the term as a ?q= style param."""
+    return lambda term: template.format(q=quote_plus(term.strip()))
 
 
+# Adding a retailer that emits schema.org / embedded-JSON products is now just
+# one line here: a label, a search-URL builder, and the shared generic parser.
+# `verified=False` marks a parser not yet confirmed against the live site —
+# save a page with scripts/probe_page.py to confirm/adjust, then flip it True.
 SOURCES: dict[str, Source] = {
     "argos": Source("argos", "Argos", _argos_search_url, argos_parse, verified=True),
-    "johnlewis": Source("johnlewis", "John Lewis", _johnlewis_search_url,
-                        johnlewis_parse, verified=False),
+    "johnlewis": Source(
+        "johnlewis", "John Lewis",
+        _query_url("https://www.johnlewis.com/search?search-term={q}"),
+        make_parser("johnlewis", "https://www.johnlewis.com"), verified=False),
+    "currys": Source(
+        "currys", "Currys",
+        _query_url("https://www.currys.co.uk/search?q={q}"),
+        make_parser("currys", "https://www.currys.co.uk"), verified=False),
 }
 
 

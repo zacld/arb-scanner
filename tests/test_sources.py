@@ -18,10 +18,12 @@ ARGOS_FLIGHT = (
 ).read_text()
 
 
-def test_registry_has_argos_and_johnlewis():
-    assert set(SOURCES) == {"argos", "johnlewis"}
+def test_registry_sources():
+    assert set(SOURCES) == {"argos", "johnlewis", "currys"}
     assert SOURCES["argos"].verified is True
-    assert SOURCES["johnlewis"].verified is False  # beta until confirmed live
+    # Non-Argos sources are beta until confirmed against their live sites.
+    assert SOURCES["johnlewis"].verified is False
+    assert SOURCES["currys"].verified is False
 
 
 def test_search_url_builders():
@@ -30,6 +32,22 @@ def test_search_url_builders():
     assert resolve_target("johnlewis", "air fryer") == (
         "https://www.johnlewis.com/search?search-term=air+fryer"
     )
+    assert resolve_target("currys", "air fryer") == (
+        "https://www.currys.co.uk/search?q=air+fryer"
+    )
+
+
+def test_currys_parses_next_data():
+    from arbfinder.sources.base import SOURCES as S
+    html = (Path(__file__).parent / "fixtures" / "currys_search.html").read_text()
+    products = S["currys"].parse(html)
+    by_name = {p.name: p for p in products}
+    ninja = next(p for p in products if "Ninja" in p.name)
+    assert ninja.price == 179.99          # nested {"now": "179.99"} price
+    assert ninja.source == "currys"
+    assert ninja.url == "https://www.currys.co.uk/products/ninja-foodi-af400uk-215-ninja.html"
+    tower = next(p for p in products if "Tower" in p.name)
+    assert tower.price == 179.00          # flat numeric price
 
 
 def test_full_url_passes_through_unchanged():

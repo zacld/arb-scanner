@@ -81,9 +81,11 @@ def main(argv: list[str] | None = None) -> int:
 
     scan = sub.add_parser("scan", help="Search retail sites by term and compare prices elsewhere")
     scan.add_argument("query", help="Search term (e.g. \"air fryer\") — or a full source URL")
-    scan.add_argument("--source", action="append", choices=["argos", "johnlewis"],
+    from .sources.base import SOURCES as _SRC
+    scan.add_argument("--source", action="append", choices=list(_SRC),
                       help="Retail site(s) to search; repeatable (default: argos). "
-                           "johnlewis is beta — parser not yet confirmed against the live site.")
+                           "Non-Argos sources are beta — parsers not yet confirmed "
+                           "against their live sites.")
     scan.add_argument("--comparator", choices=["google", "both", "pricerunner", "ebay"],
                       default="google",
                       help="Price source. 'google' (default): Google Shopping via a real "
