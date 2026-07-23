@@ -91,10 +91,34 @@ and parse it:
 python -m arbfinder scan --from-file argos.html --source argos --comparator google
 ```
 
-Other fetch modes exist (`--via jina` routes through
-[Jina Reader](https://jina.ai/reader) with a free `JINA_API_KEY`; `--show-browser`
-uses a local browser) but against Akamai-hardened sites `--from-file` is what
-actually works.
+### Autonomous scraping via your own Chrome (`--via chrome`)
+
+To scrape without saving pages by hand, drive the browser that already gets
+through — **your real Chrome**:
+
+1. Launch Chrome with a debugging port (double-click `scripts/chrome-debug.command`
+   on macOS, or run it):
+   ```bash
+   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+     --remote-debugging-port=9222 --user-data-dir="$HOME/.arbfinder-chrome-debug"
+   ```
+2. In *that* Chrome window, browse the retailer once (e.g. open
+   `https://www.argos.co.uk/search/air-fryer/`) so it clears the bot check.
+3. Leave it open and scan — the tool drives that session, no file needed, and
+   can hit many searches in one go:
+   ```bash
+   python -m arbfinder scan "air fryer" --source argos --comparator ebay --via chrome
+   ```
+
+It works because the tool reuses your genuine, already-cleared Chrome session
+(real fingerprint + Akamai clearance cookie) rather than a detectable fresh
+browser. If the site starts blocking again, just re-load a page in that Chrome
+window to refresh the clearance.
+
+Other fetch modes: `--via jina` routes through
+[Jina Reader](https://jina.ai/reader) with a free `JINA_API_KEY`;
+`--show-browser` uses a fresh local browser (usually blocked by Akamai);
+`--from-file` parses a page you saved by hand (always works).
 
 To compare against eBay UK instead (once your Browse API key is approved):
 register a free app at <https://developer.ebay.com/my/keys> (Production

@@ -105,12 +105,16 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--ebay-env", choices=["PRODUCTION", "SANDBOX"], default="PRODUCTION")
     scan.add_argument("--delay", type=float, default=2.5,
                       help="Minimum seconds between requests to the same host (default: 2.5)")
-    scan.add_argument("--via", choices=["auto", "jina", "browser"], default="auto",
-                      help="How to fetch source pages. 'auto' (default): plain HTTP then "
-                           "a local browser. 'jina': fetch through Jina Reader "
-                           "(r.jina.ai) — renders from Jina's servers, bypassing your IP "
-                           "reputation and local-browser fingerprint (best when the site "
-                           "keeps serving Access Denied). 'browser': force the local browser.")
+    scan.add_argument("--via", choices=["auto", "chrome", "jina", "browser"], default="auto",
+                      help="How to fetch source pages. 'auto' (default): plain HTTP then a "
+                           "local browser. 'chrome': drive your OWN running Chrome over CDP "
+                           "— reuses its real session/bot-protection clearance for "
+                           "autonomous scraping (launch Chrome with --remote-debugging-port "
+                           "and browse the site once first). 'jina': fetch via Jina Reader. "
+                           "'browser': force a fresh local browser.")
+    scan.add_argument("--cdp-url", default="http://127.0.0.1:9222",
+                      help="DevTools endpoint of your Chrome for --via chrome "
+                           "(default: http://127.0.0.1:9222)")
     scan.add_argument("--show-browser", action="store_true",
                       help="Run the Playwright fallback with a visible browser window "
                            "instead of headless (passes bot checks more reliably)")
@@ -206,14 +210,21 @@ def main(argv: list[str] | None = None) -> int:
             print("Give a search term (or a URL), or use --from-file.", file=sys.stderr)
             return 2
         session = PoliteSession(min_delay=args.delay)
-        browser = BrowserFetcher(headless=not args.show_browser,
-                                 min_delay=args.delay) if args.show_browser else None
+        fetch_mode = args.via
+        if args.via == "chrome":
+            # Connect to the user's already-running, already-cleared Chrome.
+            browser = BrowserFetcher(cdp_url=args.cdp_url, min_delay=args.delay)
+            fetch_mode = "browser"  # force the browser path; it's the CDP one
+        elif args.show_browser:
+            browser = BrowserFetcher(headless=False, min_delay=args.delay)
+        else:
+            browser = None
         for name in sources:
             target = args.query
             pretty = target if target.startswith("http") else f'"{target}" on {SOURCES[name].label}'
             print(f"Searching {pretty} …")
             try:
-                found = make_scraper(name, session, browser, fetch_mode=args.via).scrape(
+                found = make_scraper(name, session, browser, fetch_mode=fetch_mode).scrape(
                     args.query, max_products=args.max_products)
                 print(f"  {SOURCES[name].label}: {len(found)} products")
                 products.extend(found)

@@ -41,14 +41,20 @@ class BrowserFetcher:
         min_delay: float = 2.5,
         jitter: float = 0.75,
         timeout_s: float = 45.0,
+        cdp_url: str | None = None,
     ):
         self.headless = headless
         self.min_delay = min_delay
         self.jitter = jitter
         self.timeout_s = timeout_s
+        # When set, connect to an already-running Chrome over the DevTools
+        # Protocol instead of launching one — reuses the user's real browser
+        # session (and its bot-protection clearance) for autonomous scraping.
+        self.cdp_url = cdp_url
         self._pw = None
         self._ctx = None
         self._page = None
+        self._is_cdp = False
         self._last_nav = 0.0
         self.channel: str | None = None
         self.unavailable_reason: str | None = None
@@ -65,6 +71,29 @@ class BrowserFetcher:
             log.warning(INSTALL_HINT)
             return False
         self._pw = sync_playwright().start()
+
+        # -- connect to a user-launched Chrome over CDP ---------------------
+        if self.cdp_url:
+            try:
+                browser = self._pw.chromium.connect_over_cdp(self.cdp_url)
+                ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+                self._ctx = ctx
+                # New tab in the existing context: shares its cookies (incl. the
+                # Akamai clearance) without hijacking the tab you're viewing.
+                self._page = ctx.new_page()
+                self._is_cdp = True
+                self.channel = "your Chrome (CDP)"
+                log.info("Connected to your Chrome at %s", self.cdp_url)
+                return True
+            except Exception as exc:  # noqa: BLE001
+                self.unavailable_reason = (
+                    f"Could not connect to Chrome at {self.cdp_url}: {exc}\n"
+                    "Launch Chrome with remote debugging first (see --via chrome help), "
+                    "and browse the retailer once so it clears the bot check."
+                )
+                log.warning(self.unavailable_reason)
+                self.close()
+                return False
         # Prefer the user's REAL installed browser: Akamai fingerprints
         # Playwright's bundled test build specifically (a plain Safari/Chrome
         # visit from the same IP sails through), so real Chrome/Edge with a
@@ -149,12 +178,18 @@ class BrowserFetcher:
             return None
 
     def close(self) -> None:
-        for closer in (
-            lambda: self._ctx.close() if self._ctx else None,
-            lambda: self._pw.stop() if self._pw else None,
-        ):
+        closers = []
+        if self._is_cdp:
+            # Only close our own tab; leave the user's Chrome and its other
+            # tabs running, and just detach the Playwright connection.
+            closers.append(lambda: self._page.close() if self._page else None)
+        elif self._ctx:
+            closers.append(lambda: self._ctx.close())
+        closers.append(lambda: self._pw.stop() if self._pw else None)
+        for closer in closers:
             try:
                 closer()
             except Exception:  # noqa: BLE001 - teardown is best-effort
                 pass
         self._pw = self._ctx = self._page = None
+        self._is_cdp = False
