@@ -63,21 +63,29 @@ PAGE = """<!doctype html>
 </style></head><body>
 <h1>retail-arbitrage-finder</h1>
 <p class="sub">Scrape a UK retail search page, compare prices elsewhere, surface the gaps.</p>
-<form method="post" action="/scan">
- <label class="wide">Search term <span style="font-weight:400">(e.g. air fryer — or paste a full URL)</span>
-  <input name="url" placeholder="air fryer" value="{url}" required></label>
- <label class="wide">Search these sites
-  <span style="display:flex;gap:1.2rem;font-weight:400;margin-top:.3rem">{source_boxes}</span></label>
- <label>Max products per site
-  <input name="max_products" type="number" min="1" max="60" value="{max_products}"></label>
- <label>Compare against
+<form method="post" action="/scan" enctype="multipart/form-data">
+ <label class="wide">① Saved search page (HTML)
+  <span style="font-weight:400">— open a retailer's results page in your browser, save it
+   (Chrome: Cmd+S → "Webpage, HTML Only" · Safari: "Page Source"), then choose it here.
+   This is the reliable route past bot protection.</span>
+  <input type="file" name="page" accept=".html,.htm,text/html"></label>
+ <label>② Which retailer is the page from?
+  <select name="source">{source_options}</select></label>
+ <label>③ Compare against
   <select name="comparator">
-   <option value="google" {g_sel}>Google Shopping (no key)</option>
-   <option value="ebay" {e_sel}>eBay UK (needs key)</option>
+   <option value="ebay" {e_sel}>eBay UK — needs key, gives resale + Net £</option>
+   <option value="google" {g_sel}>Google Shopping — no key, opens a browser</option>
+  </select></label>
+ <label>Max products
+  <input name="max_products" type="number" min="1" max="60" value="{max_products}"></label>
+ <label>eBay environment
+  <select name="ebay_env">
+   <option value="PRODUCTION" {prd_sel}>Production (real data)</option>
+   <option value="SANDBOX" {sbx_sel}>Sandbox (test — no real listings)</option>
   </select></label>
  <label>Selling fees %
   <input name="fees" type="number" step="0.5" value="{fees}"></label>
- <label>Postage £
+ <label>Postage £ <span style="font-weight:400">(bulky items ~£6–10)</span>
   <input name="postage" type="number" step="0.01" value="{postage}"></label>
  <label>eBay Client ID <span style="font-weight:400">(App ID — only for eBay)</span>
   <input name="ebay_id" autocomplete="off" value="{ebay_id}"></label>
@@ -86,8 +94,12 @@ PAGE = """<!doctype html>
  <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:400">
   <input type="checkbox" name="remember" value="1" {remember_chk} style="width:auto">
   Remember these on this machine (saved unencrypted to {config_path})</label>
+ <details class="wide"><summary style="cursor:pointer;font-size:.85rem;color:#888">
+   Advanced: live search instead of a saved page (often blocked by Akamai)</summary>
+  <label style="margin-top:.5rem">Search term — tries to fetch the site live
+   <input name="url" placeholder="air fryer" value="{url}"></label></details>
  <p class="note">Runs locally on 127.0.0.1. Credentials are sent only to eBay's API.
-    {saved_note} A Chromium window may open for scraping; that's expected.</p>
+    {saved_note}</p>
  <button type="submit">Run scan</button>
 </form>
 {results}
@@ -134,27 +146,32 @@ def _results_table(comparisons, market: str, fees: float, postage: float) -> str
             f'<p class="note">{note} {len(comparisons)} result(s), biggest gap first.</p>')
 
 
-def _run_scan(form) -> str:
+def _run_scan(form, files=None) -> str:
+    files = files or {}
     query = form.get("url", "").strip()
-    comparator = form.get("comparator", "google")
-    chosen = [s for s in SOURCES if form.get(f"source_{s}")]
-    if not chosen:
-        chosen = ["argos"]
+    comparator = form.get("comparator", "ebay")
+    source = form.get("source") if form.get("source") in SOURCES else "argos"
     try:
         max_products = int(form.get("max_products") or 10)
         fees = float(form.get("fees") or 13)
         postage = float(form.get("postage") or 0)
     except ValueError:
         return '<p class="err">Max products, fees and postage must be numbers.</p>'
-    if not query:
-        return '<p class="err">Please enter a search term (e.g. air fryer).</p>'
 
-    from .browser import BrowserFetcher
-    from .http import PoliteSession
+    upload = files.get("page")
+    upload_html = ""
+    if upload is not None and getattr(upload, "filename", ""):
+        try:
+            upload_html = upload.read().decode("utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            return f'<p class="err">Could not read the uploaded file: {html.escape(str(exc))}</p>'
+    if not upload_html and not query:
+        return ('<p class="err">Upload a saved search page (recommended), or open '
+                '“Advanced” and enter a live search term.</p>')
 
+    # -- build the comparator ------------------------------------------------
     if comparator == "ebay":
         saved = config.load_credentials()
-        # Use what's typed, else fall back to saved/env credentials.
         cid = form.get("ebay_id", "").strip() or saved["ebay_client_id"]
         secret = form.get("ebay_secret", "").strip() or saved["ebay_client_secret"]
         if not cid or not secret:
@@ -163,36 +180,43 @@ def _run_scan(form) -> str:
         if form.get("remember"):
             config.save_credentials(cid, secret)
         from .comparators.ebay import EbayBrowseClient
-        client = EbayBrowseClient(cid, secret)
+        env = "SANDBOX" if form.get("ebay_env") == "SANDBOX" else "PRODUCTION"
+        client = EbayBrowseClient(cid, secret, env=env)
         google = None
     else:
         from .comparators.google_shopping import GoogleShoppingClient
         client = google = GoogleShoppingClient(headless=False, interactive=False)
 
-    session = PoliteSession()
-    browser = BrowserFetcher(headless=False)
     try:
-        products = []
-        notes = []
-        for name in chosen:
-            scraper = make_scraper(name, session, browser)
+        # -- gather products: uploaded page (reliable) or live scrape --------
+        if upload_html:
+            products = SOURCES[source].parse(upload_html)
+            for p in products:
+                p.source = source
+            if max_products:
+                products = products[:max_products]
+            note = f"Parsed {len(products)} products from the uploaded {SOURCES[source].label} page"
+            if not products:
+                return ('<p class="err">No products found in that file. Make sure it is the '
+                        'search-<em>results</em> page saved as HTML, and that the retailer '
+                        f'matches (“{html.escape(SOURCES[source].label)}” selected).</p>')
+        else:
+            from .browser import BrowserFetcher
+            from .http import PoliteSession
+            scraper = make_scraper(source, PoliteSession(), BrowserFetcher(headless=False))
             try:
-                found = scraper.scrape(query, max_products=max_products)
-                products.extend(found)
-                notes.append(f"{SOURCES[name].label}: {len(found)} products")
+                products = scraper.scrape(query, max_products=max_products)
             except ScrapeBlocked as exc:
-                notes.append(f'<span style="color:#c44">{SOURCES[name].label}: '
-                             f'{html.escape(str(exc).splitlines()[-1])}</span>')
-        if not products:
-            return ('<p class="err">No products scraped from '
-                    f'{", ".join(SOURCES[n].label for n in chosen)}.<br>'
-                    + "<br>".join(notes) + "</p>")
+                return (f'<p class="err">{html.escape(str(exc).splitlines()[-1])}<br><br>'
+                        'Live fetching is usually blocked — save the page in your browser '
+                        'and upload it instead.</p>')
+            note = f"Scraped {len(products)} products live from {SOURCES[source].label}"
+
         comparisons = sort_comparisons(
             compare_products(products, client), fees_pct=fees, postage=postage
         )
         market = getattr(client, "market_name", comparator)
-        return (f'<p class="note">Scraped — {" · ".join(notes)}</p>'
-                + _results_table(comparisons, market, fees, postage))
+        return f'<p class="note">{note}.</p>' + _results_table(comparisons, market, fees, postage)
     except Exception as exc:  # noqa: BLE001 - surface any failure in the page
         log.exception("scan failed")
         return f'<p class="err">Scan failed: {html.escape(str(exc))}</p>'
@@ -201,24 +225,20 @@ def _run_scan(form) -> str:
             google.close()
 
 
-def _source_boxes(form) -> str:
-    chosen_any = any(form.get(f"source_{s}") for s in SOURCES)
-    boxes = []
+def _source_options(form) -> str:
+    selected = form.get("source") if form.get("source") in SOURCES else "argos"
+    opts = []
     for name, src in SOURCES.items():
-        checked = "checked" if (form.get(f"source_{name}")
-                                or (not chosen_any and name == "argos")) else ""
-        tag = "" if src.verified else ' <span style="color:#c93">(beta)</span>'
-        boxes.append(
-            f'<label style="flex-direction:row;align-items:center;gap:.35rem;font-weight:400">'
-            f'<input type="checkbox" name="source_{name}" value="1" {checked} '
-            f'style="width:auto">{html.escape(src.label)}{tag}</label>'
-        )
-    return "".join(boxes)
+        tag = "" if src.verified else " (beta)"
+        sel = "selected" if name == selected else ""
+        opts.append(f'<option value="{name}" {sel}>{html.escape(src.label)}{tag}</option>')
+    return "".join(opts)
 
 
 def _render(results: str = "", form=None) -> str:
     form = form or {}
-    comparator = form.get("comparator", "google")
+    comparator = form.get("comparator", "ebay")
+    env = form.get("ebay_env", "PRODUCTION")
     saved = config.load_credentials()
     have_secret = bool(saved["ebay_client_secret"]) or bool(form.get("ebay_secret"))
     saved_note = (
@@ -228,7 +248,7 @@ def _render(results: str = "", form=None) -> str:
     )
     return PAGE.format(
         url=html.escape(form.get("url", "")),
-        source_boxes=_source_boxes(form),
+        source_options=_source_options(form),
         max_products=html.escape(str(form.get("max_products", "10"))),
         fees=html.escape(str(form.get("fees", "13"))),
         postage=html.escape(str(form.get("postage", "0"))),
@@ -238,8 +258,10 @@ def _render(results: str = "", form=None) -> str:
         remember_chk="checked" if (form.get("remember") or config.has_saved_secret()) else "",
         config_path=html.escape(str(config.CONFIG_PATH)),
         saved_note=saved_note,
-        g_sel="selected" if comparator != "ebay" else "",
+        g_sel="selected" if comparator == "google" else "",
         e_sel="selected" if comparator == "ebay" else "",
+        prd_sel="selected" if env != "SANDBOX" else "",
+        sbx_sel="selected" if env == "SANDBOX" else "",
         results=results,
     )
 
@@ -251,7 +273,7 @@ def index() -> str:
 
 @app.route("/scan", methods=["POST"])
 def scan() -> str:
-    return _render(results=_run_scan(request.form), form=request.form)
+    return _render(results=_run_scan(request.form, request.files), form=request.form)
 
 
 @app.route("/forget")

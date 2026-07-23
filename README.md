@@ -42,9 +42,11 @@ python -m arbfinder.dashboard
 # open http://127.0.0.1:5000
 ```
 
-Enter a **search term** (e.g. "air fryer"), tick which sites to search
-(Argos; John Lewis is beta), pick Google Shopping (no key) or eBay, and — for
-eBay — type your Client ID / Secret into the form. It **binds to 127.0.0.1 only** and
+**Upload a saved search page** (the reliable route past bot protection — save a
+retailer's results page from your browser), pick the **retailer** and
+**comparator** from the dropdowns, choose **eBay Production/Sandbox**, and — for
+eBay — type your Client ID / Secret. (An "Advanced" section still offers live
+search by term, but that's usually blocked by Akamai.) It **binds to 127.0.0.1 only** and
 credentials are sent only to eBay's own API.
 
 Tick **Remember these on this machine** to save the credentials (so you don't

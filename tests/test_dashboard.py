@@ -77,9 +77,46 @@ def test_remember_checkbox_persists_typed_credentials():
     }
 
 
-def test_scan_validates_missing_url():
-    out = dashboard._run_scan({"url": "", "comparator": "google"})
-    assert "Please enter a search term" in out
+def test_scan_validates_no_input():
+    out = dashboard._run_scan({"url": "", "comparator": "google"}, {})
+    assert "Upload a saved search page" in out
+
+
+class _FakeUpload:
+    filename = "argos.html"
+
+    def __init__(self, data: bytes):
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def test_uploaded_page_is_parsed(monkeypatch, tmp_path):
+    from pathlib import Path
+    # Stub the comparison so no network/browser is needed; we only test that
+    # the uploaded page is read and parsed into products.
+    seen = {}
+    def fake_compare(products, client, **k):
+        seen["n"] = len(products)
+        return []
+    monkeypatch.setattr(dashboard, "compare_products", fake_compare)
+    argos = Path("tests/fixtures/argos_flight_search.html").read_bytes()
+    out = dashboard._run_scan(
+        {"source": "argos", "comparator": "google", "max_products": "5"},
+        {"page": _FakeUpload(argos)},
+    )
+    assert seen["n"] == 3  # 3 products parsed from the fixture and handed to compare
+    assert "Parsed 3 products from the uploaded Argos page" in out
+
+
+def test_dropdowns_render():
+    body = dashboard._render()
+    assert '<select name="source">' in body
+    assert '<select name="comparator">' in body
+    assert '<select name="ebay_env">' in body
+    assert 'type="file"' in body  # the upload control
+    assert "John Lewis (beta)" in body
 
 
 def test_scan_ebay_requires_credentials():
