@@ -10,6 +10,7 @@ a parser.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -43,7 +44,10 @@ class Source:
 
 
 def _argos_search_url(term: str) -> str:
-    return f"https://www.argos.co.uk/search/{quote(term.strip())}/"
+    # Argos search paths are hyphen-slugged and lowercase: "air fryer" ->
+    # /search/air-fryer/ (NOT /search/air%20fryer/, which Akamai treats oddly).
+    slug = re.sub(r"\s+", "-", term.strip().lower())
+    return f"https://www.argos.co.uk/search/{quote(slug)}/"
 
 
 def _johnlewis_search_url(term: str) -> str:

@@ -25,7 +25,8 @@ def test_registry_has_argos_and_johnlewis():
 
 
 def test_search_url_builders():
-    assert resolve_target("argos", "air fryer") == "https://www.argos.co.uk/search/air%20fryer/"
+    assert resolve_target("argos", "air fryer") == "https://www.argos.co.uk/search/air-fryer/"
+    assert resolve_target("argos", "Ninja AF400UK") == "https://www.argos.co.uk/search/ninja-af400uk/"
     assert resolve_target("johnlewis", "air fryer") == (
         "https://www.johnlewis.com/search?search-term=air+fryer"
     )
