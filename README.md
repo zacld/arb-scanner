@@ -43,10 +43,18 @@ python -m arbfinder.dashboard
 ```
 
 Enter an Argos URL, pick Google Shopping (no key) or eBay, and — for eBay —
-type your Client ID / Secret into the form. It **binds to 127.0.0.1 only**;
-credentials are used in memory for that one scan and are never written to
-disk, logged, or sent anywhere except eBay's own API. A Chromium window opens
-during scraping (Argos / Google); that's expected.
+type your Client ID / Secret into the form. It **binds to 127.0.0.1 only** and
+credentials are sent only to eBay's own API.
+
+Tick **Remember these on this machine** to save the credentials (so you don't
+retype them): they're written to `~/.arbfinder-credentials.json`, locked to
+your user account where the OS supports it. This is the same plaintext-on-your-
+own-machine pattern as `~/.netrc` — convenient, not encryption — so only use
+it on a machine you trust. Environment variables (`EBAY_CLIENT_ID` /
+`EBAY_CLIENT_SECRET`) override the file, and **Forget it** deletes it. The
+saved secret is used for scans but is never rendered back into the page.
+
+A Chromium window opens during scraping (Argos / Google); that's expected.
 
 ## Live runs (command line)
 

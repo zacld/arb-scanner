@@ -20,13 +20,14 @@ import html
 import logging
 
 try:
-    from flask import Flask, request
+    from flask import Flask, redirect, request
 except ImportError:  # pragma: no cover - guidance when Flask isn't installed
     raise SystemExit(
         "Flask is not installed. Run:  pip install -r requirements.txt\n"
         "(or: pip install flask)"
     )
 
+from . import config
 from .pipeline import compare_products
 from .report import sort_comparisons
 
@@ -79,9 +80,11 @@ PAGE = """<!doctype html>
   <input name="ebay_id" autocomplete="off" value="{ebay_id}"></label>
  <label>eBay Client Secret <span style="font-weight:400">(Cert ID — stays on this machine)</span>
   <input name="ebay_secret" type="password" autocomplete="off" placeholder="{secret_ph}"></label>
- <p class="note">Runs locally on 127.0.0.1. Credentials are used only for this scan —
-    never saved, logged, or sent anywhere but eBay. A Chromium window may open for
-    scraping; that's expected.</p>
+ <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:400">
+  <input type="checkbox" name="remember" value="1" {remember_chk} style="width:auto">
+  Remember these on this machine (saved unencrypted to {config_path})</label>
+ <p class="note">Runs locally on 127.0.0.1. Credentials are sent only to eBay's API.
+    {saved_note} A Chromium window may open for scraping; that's expected.</p>
  <button type="submit">Run scan</button>
 </form>
 {results}
@@ -143,10 +146,15 @@ def _run_scan(form) -> str:
     from .sources.argos import ArgosScraper, ScrapeBlocked
 
     if comparator == "ebay":
-        cid = form.get("ebay_id", "").strip()
-        secret = form.get("ebay_secret", "").strip()
+        saved = config.load_credentials()
+        # Use what's typed, else fall back to saved/env credentials.
+        cid = form.get("ebay_id", "").strip() or saved["ebay_client_id"]
+        secret = form.get("ebay_secret", "").strip() or saved["ebay_client_secret"]
         if not cid or not secret:
-            return '<p class="err">eBay needs both a Client ID and Client Secret.</p>'
+            return ('<p class="err">eBay needs both a Client ID and Client Secret '
+                    '(enter them above, or save them once with "Remember").</p>')
+        if form.get("remember"):
+            config.save_credentials(cid, secret)
         from .comparators.ebay import EbayBrowseClient
         client = EbayBrowseClient(cid, secret)
         google = None
@@ -177,13 +185,24 @@ def _run_scan(form) -> str:
 def _render(results: str = "", form=None) -> str:
     form = form or {}
     comparator = form.get("comparator", "google")
+    saved = config.load_credentials()
+    have_secret = bool(saved["ebay_client_secret"]) or bool(form.get("ebay_secret"))
+    saved_note = (
+        f'A saved secret is in use — <a href="/forget">forget it</a>. '
+        if config.has_saved_secret() else
+        "Not saved unless you tick “Remember”."
+    )
     return PAGE.format(
         url=html.escape(form.get("url", "")),
         max_products=html.escape(str(form.get("max_products", "10"))),
         fees=html.escape(str(form.get("fees", "13"))),
         postage=html.escape(str(form.get("postage", "0"))),
-        ebay_id=html.escape(form.get("ebay_id", "")),
-        secret_ph="entered secret not shown" if form.get("ebay_secret") else "",
+        # Pre-fill the Client ID from saved/env; never pre-fill the secret field.
+        ebay_id=html.escape(form.get("ebay_id") or saved["ebay_client_id"]),
+        secret_ph="saved secret will be used — leave blank" if have_secret else "",
+        remember_chk="checked" if (form.get("remember") or config.has_saved_secret()) else "",
+        config_path=html.escape(str(config.CONFIG_PATH)),
+        saved_note=saved_note,
         g_sel="selected" if comparator != "ebay" else "",
         e_sel="selected" if comparator == "ebay" else "",
         results=results,
@@ -198,6 +217,13 @@ def index() -> str:
 @app.route("/scan", methods=["POST"])
 def scan() -> str:
     return _render(results=_run_scan(request.form), form=request.form)
+
+
+@app.route("/forget")
+def forget():
+    removed = config.clear_credentials()
+    msg = "Saved credentials removed." if removed else "No saved credentials to remove."
+    return _render(results=f'<p class="note">{msg}</p>')
 
 
 def main() -> None:
