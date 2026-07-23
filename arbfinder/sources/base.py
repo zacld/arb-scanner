@@ -14,6 +14,7 @@ import os
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 from urllib.parse import quote, quote_plus
 
@@ -171,16 +172,25 @@ class BrowserBackedScraper:
             html = jina_fetch(url, self.session)
             products = self.source.parse(html) if html else []
             if not products:
+                dump = ""
+                if html:
+                    try:
+                        Path("debug_jina_page.html").write_text(html, encoding="utf-8")
+                        dump = ("\nJina's output was saved to debug_jina_page.html — "
+                                "inspect it with:  python scripts/inspect_dump.py debug_jina_page.html")
+                    except OSError:
+                        pass
+                denied = html and looks_like_denial_page(html)
                 raise ScrapeBlocked(
                     f"Could not scrape {self.source.label} via Jina Reader ({url}).\n"
                     + ("Jina Reader returned no page — most often a missing/expired key "
                        "(get a free one at https://jina.ai/reader and export JINA_API_KEY), "
                        "or it was rate-limited/blocked. Or drop --via jina for the local "
                        "browser." if not html else
-                       f"Jina returned a page but no products parsed"
-                       + ("" if self.source.verified else
-                          f"; the {self.source.label} parser is beta — save it with "
-                          "scripts/probe_page.py to adjust.") + ".")
+                       "Jina fetched Argos's bot-protection page too (Akamai blocked "
+                       "Jina's servers)." if denied else
+                       f"Jina returned a page ({len(html)} bytes) but no products parsed "
+                       "— its HTML likely differs from the direct page.") + dump
                 )
             for p in products:
                 p.source = self.source.name
