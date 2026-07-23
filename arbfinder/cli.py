@@ -99,6 +99,12 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--ebay-env", choices=["PRODUCTION", "SANDBOX"], default="PRODUCTION")
     scan.add_argument("--delay", type=float, default=2.5,
                       help="Minimum seconds between requests to the same host (default: 2.5)")
+    scan.add_argument("--via", choices=["auto", "jina", "browser"], default="auto",
+                      help="How to fetch source pages. 'auto' (default): plain HTTP then "
+                           "a local browser. 'jina': fetch through Jina Reader "
+                           "(r.jina.ai) — renders from Jina's servers, bypassing your IP "
+                           "reputation and local-browser fingerprint (best when the site "
+                           "keeps serving Access Denied). 'browser': force the local browser.")
     scan.add_argument("--show-browser", action="store_true",
                       help="Run the Playwright fallback with a visible browser window "
                            "instead of headless (passes bot checks more reliably)")
@@ -174,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         pretty = target if target.startswith("http") else f'"{target}" on {SOURCES[name].label}'
         print(f"Searching {pretty} …")
         try:
-            found = make_scraper(name, session, browser).scrape(
+            found = make_scraper(name, session, browser, fetch_mode=args.via).scrape(
                 args.query, max_products=args.max_products)
             print(f"  {SOURCES[name].label}: {len(found)} products")
             products.extend(found)

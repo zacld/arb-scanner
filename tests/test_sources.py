@@ -85,6 +85,39 @@ def test_scraper_tags_products_with_source_and_limits():
     assert all(p.source == "argos" for p in products)
 
 
+def test_jina_mode_fetches_and_parses():
+    from arbfinder.sources.base import JINA_ENDPOINT, BrowserBackedScraper, SOURCES
+    session = MagicMock()
+    session.min_delay = 0
+    session.jitter = 0
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.text = ARGOS_FLIGHT
+    session.get.return_value = resp
+    scraper = BrowserBackedScraper(SOURCES["argos"], session=session, fetch_mode="jina")
+    products = scraper.scrape("air fryer", max_products=2)
+    assert len(products) == 2
+    # It called Jina Reader wrapping the Argos search URL, not Argos directly.
+    called_url = session.get.call_args[0][0]
+    assert called_url == JINA_ENDPOINT + "https://www.argos.co.uk/search/air-fryer/"
+    assert session.get.call_args.kwargs["headers"]["X-Return-Format"] == "html"
+
+
+def test_jina_mode_raises_when_empty():
+    from arbfinder.sources.base import BrowserBackedScraper, ScrapeBlocked, SOURCES
+    session = MagicMock()
+    session.min_delay = 0
+    session.jitter = 0
+    resp = MagicMock()
+    resp.status_code = 451
+    resp.text = ""
+    session.get.return_value = resp
+    scraper = BrowserBackedScraper(SOURCES["argos"], session=session, fetch_mode="jina")
+    with pytest.raises(ScrapeBlocked) as exc:
+        scraper.scrape("air fryer")
+    assert "Jina Reader" in str(exc.value)
+
+
 def test_scraper_raises_with_beta_hint_for_johnlewis():
     scraper = _scraper_with_html("johnlewis", "<html><body>nothing here</body></html>")
     scraper.browser.fetch.return_value = "<html><body>still nothing</body></html>"

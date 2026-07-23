@@ -68,9 +68,20 @@ python -m arbfinder scan "air fryer" --source argos --source johnlewis
 ```
 
 `--source` is repeatable. A full URL still works in place of a term. John
-Lewis is **beta** — its parser hasn't been confirmed against the live site yet
-(save a page with `scripts/probe_page.py` if it returns nothing, same as Argos
-was dialed in).
+Lewis and Currys are **beta** — their parsers haven't been confirmed against
+the live sites yet (save a page with `scripts/probe_page.py` if one returns
+nothing, same as Argos was dialed in).
+
+**Blocked by "Access Denied"?** Big UK retailers (Argos etc.) use Akamai bot
+protection that rate-limits by IP and fingerprints scripted browsers. Add
+`--via jina` to fetch pages through [Jina Reader](https://jina.ai/reader)
+instead — it renders the page from *Jina's* servers and returns the HTML, so
+the request never comes from your (possibly flagged) IP or a detectable local
+browser. Free, no key, no browser needed:
+
+```bash
+python -m arbfinder scan "air fryer" --via jina --comparator google
+```
 
 To compare against eBay UK instead (once your Browse API key is approved):
 register a free app at <https://developer.ebay.com/my/keys> (Production
