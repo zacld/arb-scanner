@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><title>Amazon.co.uk : desk fan</title></head><body>
+<div class="s-main-slot">
+
+  <div data-component-type="s-search-result" data-asin="B08DESKFAN1">
+    <div data-cy="title-recipe">
+      <a class="a-link-normal" href="/Bush-Black-Desk-Fan/dp/B08DESKFAN1/">
+        <h2 class="a-size-base-plus"><span>Bush Black Desk Fan - 12 Inch, 3 Speed</span></h2>
+      </a>
+    </div>
+    <div data-cy="price-recipe">
+      <span class="a-price" data-a-color="base">
+        <span class="a-offscreen">£48.99</span>
+        <span aria-hidden="true">£48<sup>99</sup></span>
+      </span>
+    </div>
+  </div>
+
+  <div data-component-type="s-search-result" data-asin="B08TOWERFAN2">
+    <div data-cy="title-recipe">
+      <a class="a-link-normal" href="/Bush-Digital-Tower-Fan/dp/B08TOWERFAN2/">
+        <h2 class="a-size-base-plus"><span>Bush Digital Grey Tower Fan</span></h2>
+      </a>
+    </div>
+    <div data-cy="price-recipe">
+      <span class="a-price"><span class="a-offscreen">£79.00</span></span>
+    </div>
+  </div>
+
+  <!-- out of stock: no price element -> must be skipped -->
+  <div data-component-type="s-search-result" data-asin="B08NOPRICE3">
+    <div data-cy="title-recipe">
+      <a class="a-link-normal" href="/dp/B08NOPRICE3/">
+        <h2><span>Some Unavailable Fan</span></h2>
+      </a>
+    </div>
+    <div data-cy="price-recipe"><span>Currently unavailable</span></div>
+  </div>
+
+  <!-- duplicate ASIN of the first result -> must be de-duplicated -->
+  <div data-component-type="s-search-result" data-asin="B08DESKFAN1">
+    <div data-cy="title-recipe"><h2><span>Bush Black Desk Fan - 12 Inch</span></h2></div>
+    <div data-cy="price-recipe">
+      <span class="a-price"><span class="a-offscreen">£50.00</span></span>
+    </div>
+  </div>
+
+</div>
+</body></html>

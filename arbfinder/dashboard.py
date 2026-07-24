@@ -87,6 +87,7 @@ PAGE = """<!doctype html>
  <label>Compare against
   <select name="comparator">
    <option value="ebay" {e_sel}>eBay UK — needs key, gives resale + Net £</option>
+   <option value="amazon" {a_sel}>Amazon UK — no key, resale + Net £ (uses your Chrome)</option>
    <option value="google" {g_sel}>Google Shopping — no key, opens a browser</option>
   </select></label>
  <label>Max products
@@ -150,8 +151,8 @@ def _results_table(comparisons, market: str, fees: float, postage: float) -> str
             f"<td>{c.n_listings}</td><td>{html.escape(c.matched_by)}</td>"
             f"<td>{html.escape(seller)}</td></tr>"
         )
-    note = ("Net £ = eBay resale minus fees + postage."
-            if market == "ebay" else
+    note = (f"Net £ = {market} resale minus fees + postage."
+            if market in ("ebay", "amazon") else
             "Net £ is N/A for retail comparisons (prices are asks, not resale value).")
     return (f"<table>{head}{''.join(rows)}</table>"
             f'<p class="note">{note} {len(comparisons)} result(s), biggest gap first.</p>')
@@ -190,6 +191,7 @@ def _run_scan(form, files=None) -> str:
                 'upload a saved search page.</p>')
 
     # -- build the comparator ------------------------------------------------
+    closeable = None
     if comparator == "ebay":
         saved = config.load_credentials()
         cid = form.get("ebay_id", "").strip() or saved["ebay_client_id"]
@@ -202,10 +204,17 @@ def _run_scan(form, files=None) -> str:
         from .comparators.ebay import EbayBrowseClient
         env = "SANDBOX" if form.get("ebay_env") == "SANDBOX" else "PRODUCTION"
         client = EbayBrowseClient(cid, secret, env=env)
-        google = None
+    elif comparator == "amazon":
+        from .comparators.amazon import AmazonClient
+        # Reuse the user's Chrome over CDP when they're scraping that way, so
+        # Amazon sees the same real, cleared session.
+        client = AmazonClient(cdp_url=(cdp_url if fetch_mode == "chrome" else None),
+                              headless=False, interactive=False)
+        closeable = client
     else:
         from .comparators.google_shopping import GoogleShoppingClient
-        client = google = GoogleShoppingClient(headless=False, interactive=False)
+        client = GoogleShoppingClient(headless=False, interactive=False)
+        closeable = client
 
     try:
         # -- gather products: uploaded page (reliable) or live scrape --------
@@ -279,8 +288,8 @@ def _run_scan(form, files=None) -> str:
         log.exception("scan failed")
         return f'<p class="err">Scan failed: {html.escape(str(exc))}</p>'
     finally:
-        if google is not None:
-            google.close()
+        if closeable is not None:
+            closeable.close()
 
 
 def _source_options(form) -> str:
@@ -328,6 +337,7 @@ def _render(results: str = "", form=None) -> str:
         saved_note=saved_note,
         g_sel="selected" if comparator == "google" else "",
         e_sel="selected" if comparator == "ebay" else "",
+        a_sel="selected" if comparator == "amazon" else "",
         prd_sel="selected" if env != "SANDBOX" else "",
         sbx_sel="selected" if env == "SANDBOX" else "",
         results=results,

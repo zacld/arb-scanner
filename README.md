@@ -132,7 +132,7 @@ Useful flags:
 
 | Flag | Meaning |
 |---|---|
-| `--comparator both\|pricerunner\|ebay` | Default `both`: runs every comparator and merges to one row per product (missing eBay creds just leave those columns empty). Name one to run it alone. |
+| `--comparator google\|ebay\|amazon\|pricerunner\|both` | Which price source. `amazon`: Amazon UK resale price via a real browser, no key (pair with `--via chrome`). `ebay`: Browse API (needs keys). `both`: merge PriceRunner + eBay to one row per product. |
 | `--fetch-ean` | Visit each product page to extract the EAN for barcode-exact matching (slower — one extra request per product) |
 | `--min-diff-pct N` | Only report rows where the marketplace is ≥ N% above the Argos price |
 | `--min-net GBP` | Only show rows whose estimated net profit is ≥ this £ (after fees + postage). Hides rows with no net figure — so you see just the flips worth doing. `--min-net 0` = anything profitable |
@@ -199,6 +199,17 @@ net profit still appear, sorted to the bottom.
      official Browse API with an application OAuth token (no user consent
      flow). EAN products are searched by `gtin` (barcode-exact); the rest by
      cleaned title, filtered to GB delivery, GBP, fixed-price, new condition.
+   - **Amazon UK** (`arbfinder/comparators/amazon.py`, `--comparator amazon`,
+     no key): the "sell it on Amazon instead" comparator. Amazon has no free
+     open pricing API, so this **prototype** reads the public search results
+     through a real browser — best with `--via chrome`, which reuses your
+     already-cleared Chrome over CDP (same trick that beats Argos's Akamai);
+     otherwise it launches its own stealthed browser. Amazon is a *resale*
+     venue, so its price is a sell price and **Net £ is computed** off it (like
+     eBay). Current price only — **no sales rank (BSR) or exact FBA fees yet**;
+     those are the paid next step (Keepa or Amazon's SP-API), worth adding once
+     you've confirmed the gaps are there. Amazon may CAPTCHA automated access;
+     reusing your real Chrome usually avoids it.
 3. **Match & filter** (`arbfinder/matching.py`). Titles are normalised
    (lowercase, strip pack sizes, punctuation, marketing filler) and compared
    with rapidfuzz `token_set_ratio`; title-search results below the threshold

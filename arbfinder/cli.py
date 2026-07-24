@@ -108,13 +108,16 @@ def main(argv: list[str] | None = None) -> int:
                            "of fetching it. The reliable way past Akamai bot protection "
                            "(Argos etc.): open the search page in Chrome/Safari, Save As "
                            "'Webpage, HTML Only', then point --source's parser at it.")
-    scan.add_argument("--comparator", choices=["google", "both", "pricerunner", "ebay"],
+    scan.add_argument("--comparator",
+                      choices=["google", "both", "pricerunner", "ebay", "amazon"],
                       default="google",
                       help="Price source. 'google' (default): Google Shopping via a real "
                            "browser, no API key — what it costs across retailers. 'ebay': "
                            "Browse API (needs EBAY_CLIENT_ID/EBAY_CLIENT_SECRET). "
-                           "'pricerunner': its private API (currently unavailable). "
-                           "'both': merge PriceRunner + eBay into one row per product.")
+                           "'amazon': Amazon UK resale price via a real browser, no key "
+                           "(best with --via chrome — reuses your Chrome; current price "
+                           "only, no sales rank yet). 'pricerunner': its private API "
+                           "(currently unavailable). 'both': merge PriceRunner + eBay.")
     scan.add_argument("--max-products", type=int, default=25)
     scan.add_argument("--fetch-ean", action="store_true",
                       help="Visit each product page to extract the EAN (slower, better matching)")
@@ -260,7 +263,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     clients = []
-    google_client = None
+    closeables = []  # browser-backed clients to tear down at the end
+    cdp = args.cdp_url if args.via == "chrome" else None
     for name in wanted:
         if name == "ebay":
             from .comparators.ebay import EbayBrowseClient
@@ -269,10 +273,18 @@ def main(argv: list[str] | None = None) -> int:
             from .comparators.google_shopping import GoogleShoppingClient
             # Headed unless --headless-compare, so Google's consent wall / any
             # CAPTCHA can be handled in the visible window.
-            google_client = GoogleShoppingClient(
+            gc = GoogleShoppingClient(
                 headless=args.headless_compare, min_delay=max(args.delay, 3.0)
             )
-            clients.append(google_client)
+            clients.append(gc)
+            closeables.append(gc)
+        elif name == "amazon":
+            from .comparators.amazon import AmazonClient
+            # Reuse the user's Chrome over CDP when --via chrome, else own browser.
+            ac = AmazonClient(cdp_url=cdp, headless=args.headless_compare,
+                              min_delay=max(args.delay, 3.0))
+            clients.append(ac)
+            closeables.append(ac)
         else:
             from .comparators.pricerunner import PriceRunnerClient
             # Shares the session so PriceRunner requests get the same politeness rules.
@@ -291,8 +303,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             _output(comparisons, args)
     finally:
-        if google_client is not None:
-            google_client.close()
+        for c in closeables:
+            c.close()
     return 0
 
 
