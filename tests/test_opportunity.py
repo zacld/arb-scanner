@@ -49,6 +49,14 @@ def test_ranking_is_profit_first_not_trend_first():
     assert ranked[0].retailer_product.name == "Big profit"  # profit wins over trend
 
 
+def test_table_labels_price_as_active_listing_estimate():
+    from arbfinder.opportunity import format_opportunities
+    o = build_opportunity(_comp("Bush Desk Fan", 22.0, 49.99), 13, 0)
+    out = format_opportunities([o])
+    assert "ACTIVE listings" in out          # honest label, not "sold"
+    assert "verify sold volume" in out.lower()
+
+
 def test_match_confidence_from_fuzzy_title():
     good = _comp("Sony WH-CH520 Headphones", 30, 40, listing_title="Sony WH-CH520 Wireless Headphones")
     bad = _comp("Sony WH-CH520 Headphones", 30, 40, listing_title="Case for Sony WH-CH520")

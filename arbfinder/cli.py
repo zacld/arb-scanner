@@ -235,8 +235,17 @@ def _hunt(args) -> int:
             except Exception:  # noqa: BLE001
                 pass
 
-    ranked = rank_opportunities(opportunities, min_net=args.min_net,
-                                min_roi=args.min_roi, min_match=args.min_match)
+    # Default profit gates (£5 net, 15% ROI, 0.80 match) unless the user set
+    # them or asked to see everything. Direct profitability filters, not
+    # brand/price/category assumptions.
+    if args.show_all:
+        min_net = min_roi = min_match = None
+    else:
+        min_net = args.min_net if args.min_net is not None else 5.0
+        min_roi = args.min_roi if args.min_roi is not None else 0.15
+        min_match = args.min_match if args.min_match is not None else 0.80
+    ranked = rank_opportunities(opportunities, min_net=min_net,
+                                min_roi=min_roi, min_match=min_match)
     if not ranked:
         print("\nNo opportunities cleared the thresholds "
               f"(checked {len(opportunities)}). Try lowering --min-net/--min-roi/"
@@ -324,15 +333,18 @@ def main(argv: list[str] | None = None) -> int:
                       help="Max retail products to take per category (default: 3)")
     hunt.add_argument("--min-roi", type=float, default=None, metavar="FRAC",
                       help="Minimum ROI (net/buy) to keep an opportunity, e.g. 0.15 = 15%%. "
-                           "Applied before ranking; sub-threshold items are excluded.")
+                           "Applied before ranking (hunt default: 0.15; --show-all disables).")
     hunt.add_argument("--min-match", type=float, default=None, metavar="FRAC",
-                      help="Minimum product-match confidence 0-1 to keep an opportunity "
-                           "(e.g. 0.6). Guards against wrong cross-references.")
+                      help="Minimum product-match confidence 0-1 to keep an opportunity, "
+                           "guarding against wrong cross-references (hunt default: 0.80).")
     hunt.add_argument("--tiktok-url", default=None,
                       help="Public TikTok-Shop aggregator page for the experimental "
                            "'tiktok' signal (or set ARBFINDER_TIKTOK_URL).")
     hunt.add_argument("--fresh", action="store_true",
                       help="Ignore the trend cache and re-fetch every signal.")
+    hunt.add_argument("--show-all", action="store_true",
+                      help="Drop the default profit gates (£5 net / 15%% ROI / 0.80 match) "
+                           "and show the full market, including losers — for inspection.")
     hunt.add_argument("--ebay-env", choices=["PRODUCTION", "SANDBOX"], default="PRODUCTION")
     hunt.add_argument("--delay", type=float, default=2.5,
                       help="Minimum seconds between requests to the same host (default: 2.5)")

@@ -66,6 +66,19 @@ def _sig_chk(form, name: str, default: bool) -> str:
     return "checked" if default else ""
 
 
+# Default profit gates for a fresh page: direct profitability filters (NOT
+# assumptions about brand/price/category). Pre-filled, fully editable, and
+# bypassable with "Show all results".
+DEFAULT_MIN_NET = "5"
+DEFAULT_MIN_ROI = "15"
+DEFAULT_MIN_MATCH = "80"
+
+
+def _prefill(form, key: str, default: str) -> str:
+    """A number field's value: submitted value on POST, default on a fresh GET."""
+    return html.escape(str(form.get(key, ""))) if form else default
+
+
 def _git(gitargs, timeout: float = 90):
     """Run git in the repo; return (returncode, combined output)."""
     try:
@@ -179,12 +192,16 @@ PAGE = """<!doctype html>
   <input name="fees" type="number" step="0.5" value="{fees}"></label>
  <label>Postage £ <span style="font-weight:400">(bulky items ~£6–10)</span>
   <input name="postage" type="number" step="0.01" value="{postage}"></label>
- <label>Min net £ <span style="font-weight:400">(blank = all · 0 = profitable)</span>
+ <label>Min net £ <span style="font-weight:400">(profit gate)</span>
   <input name="min_net" type="number" step="0.01" value="{min_net}"></label>
- <label>Min ROI % <span style="font-weight:400">(hunt only, e.g. 15)</span>
+ <label>Min ROI % <span style="font-weight:400">(return on capital)</span>
   <input name="min_roi" type="number" step="1" value="{min_roi}"></label>
- <label>Min match % <span style="font-weight:400">(hunt only, 0–100)</span>
+ <label>Min match % <span style="font-weight:400">(reject weak matches)</span>
   <input name="min_match" type="number" step="1" value="{min_match}"></label>
+ <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:400">
+  <input type="checkbox" name="show_all" value="1" {show_all_chk} style="width:auto">
+  Show all results <span style="color:#888">— ignore the profit gates for this scan
+  (inspect the full market, including losers)</span></label>
  <label>eBay Client ID <span style="font-weight:400">(App ID — only for eBay)</span>
   <input name="ebay_id" autocomplete="off" value="{ebay_id}"></label>
  <label>eBay Client Secret <span style="font-weight:400">(Cert ID — stays on this machine)</span>
@@ -260,7 +277,8 @@ def _discovery_summary(targets) -> str:
 
 def _opportunities_table(opps) -> str:
     market = getattr(opps[0].marketplace_match, "market", "resale")
-    head = (f"<tr><th>Product</th><th>Source</th><th>Buy £</th><th>{html.escape(market)} £</th>"
+    head = (f"<tr><th>Product</th><th>Source</th><th>Buy £</th>"
+            f"<th>Est. {html.escape(market)} £</th>"
             "<th>Net £</th><th>ROI</th><th>Score</th><th>Dem</th><th>Match</th><th>T/S</th></tr>")
     rows = []
     for o in opps:
@@ -278,9 +296,14 @@ def _opportunities_table(opps) -> str:
             f"<td>{o.roi * 100:.0f}%</td><td>{o.opportunity_score:.2f}</td>"
             f"<td>{o.demand_confidence:.2f}</td><td>{o.match_confidence:.2f}</td>"
             f"<td>{ts:.2f}</td></tr>")
-    return (f"<table>{head}{''.join(rows)}</table>"
-            '<p class="note">Sorted profit-first: net → ROI → demand → match → '
-            f'trend/seasonal. Dem/Match/T-S are 0–1 confidences. {len(opps)} opportunity(ies).</p>')
+    return (
+        f"<table>{head}{''.join(rows)}</table>"
+        f'<p class="note"><b>“Est. {html.escape(market)} £” is the median of ACTIVE '
+        f'{html.escape(market)} listings — asking prices, not completed/sold data.</b> It '
+        'shows the potential spread, not a confirmed sale price; Net £ and ROI are derived '
+        'from it. Verify sold volume, realistic sale price, postage and stock before buying. '
+        'Sorted profit-first: net → ROI → demand → match → trend/seasonal. Dem/Match/T-S are '
+        f'0–1 confidences. {len(opps)} opportunity(ies).</p>')
 
 
 def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
@@ -373,7 +396,9 @@ def _run_scan(form, files=None) -> str:
         except ValueError:
             return '<p class="err">Min net £ must be a number (or left blank).</p>'
     min_roi = _opt_pct(form.get("min_roi"))       # "15" -> 0.15
-    min_match = _opt_pct(form.get("min_match"))    # "60" -> 0.60
+    min_match = _opt_pct(form.get("min_match"))    # "80" -> 0.80
+    if form.get("show_all"):  # escape hatch: drop the profit gates for this scan
+        min_net = min_roi = min_match = None
     signals = [name for name, field in SIGNAL_FIELDS.items() if form.get(field)] or DEFAULT_SIGNALS
     trend_terms = [t.strip() for t in (form.get("trend_terms", "") or "")
                    .replace("\n", ",").split(",") if t.strip()]
@@ -533,9 +558,10 @@ def _render(results: str = "", form=None) -> str:
         max_products=html.escape(str(form.get("max_products", "10"))),
         fees=html.escape(str(form.get("fees", "13"))),
         postage=html.escape(str(form.get("postage", "0"))),
-        min_net=html.escape(str(form.get("min_net", ""))),
-        min_roi=html.escape(str(form.get("min_roi", ""))),
-        min_match=html.escape(str(form.get("min_match", ""))),
+        min_net=_prefill(form, "min_net", DEFAULT_MIN_NET),
+        min_roi=_prefill(form, "min_roi", DEFAULT_MIN_ROI),
+        min_match=_prefill(form, "min_match", DEFAULT_MIN_MATCH),
+        show_all_chk="checked" if form.get("show_all") else "",
         cdp_url=html.escape(cdp_url),
         chrome_status=chrome_status,
         hunt_chk="checked" if form.get("hunt") else "",

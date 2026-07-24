@@ -111,7 +111,7 @@ def format_opportunities(opps, name_width: int = 38) -> str:
         return "No opportunities cleared the profit/ROI/match thresholds."
     market = getattr(opps[0].marketplace_match, "market", "resale")
     header = (
-        f"{'Product':<{name_width}}  {'Buy £':>7}  {market[:6] + ' £':>8}  "
+        f"{'Product':<{name_width}}  {'Buy £':>7}  {market[:4] + '£*':>8}  "
         f"{'Net £':>7}  {'ROI':>6}  {'Score':>5}  {'Dem':>4}  {'Mat':>4}  {'T/S':>4}"
     )
     lines = [header, "-" * len(header)]
@@ -124,6 +124,8 @@ def format_opportunities(opps, name_width: int = 38) -> str:
             f"{o.opportunity_score:>5.2f}  {o.demand_confidence:>4.2f}  "
             f"{o.match_confidence:>4.2f}  {ts:>4.2f}"
         )
+    lines.append(f"* {market}£ = median of ACTIVE listings (asking prices, NOT completed/"
+                 "sold). Net/ROI derive from it — verify sold volume & price before buying.")
     lines.append("(sorted profit-first: net → ROI → demand → match → trend/seasonal. "
                  "Dem/Mat/T-S are 0-1 confidences.)")
     return "\n".join(lines)

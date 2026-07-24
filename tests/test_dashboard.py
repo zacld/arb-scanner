@@ -152,6 +152,15 @@ def test_hunt_mode_discovers_and_hunts(monkeypatch, tmp_path):
     assert 'href="/download"' in out                       # CSV export link
 
 
+def test_profit_gate_defaults_prefilled_and_show_all_present():
+    body = dashboard._render()
+    # Fresh page pre-fills the profit gates (£5 net / 15% ROI / 80% match).
+    assert 'name="min_net" type="number" step="0.01" value="5"' in body
+    assert 'name="min_roi" type="number" step="1" value="15"' in body
+    assert 'name="min_match" type="number" step="1" value="80"' in body
+    assert 'name="show_all"' in body  # editable escape hatch
+
+
 def test_dashboard_offers_my_chrome_fetch_mode():
     body = dashboard._render()
     assert 'name="fetch_mode"' in body
