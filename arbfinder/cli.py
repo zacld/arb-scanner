@@ -137,11 +137,17 @@ def _make_clients(wanted, args, session, cdp, client_id, client_secret):
 
 
 def _hunt(args) -> int:
-    """Discover trending items from Amazon, hunt them at retail, report the profitable ones."""
+    """Demand-guided discovery → retail search → profit-first opportunity ranking.
+
+    Trend/seasonal/marketplace signals pick which categories to investigate;
+    net profit and ROI (with hard thresholds) decide what's actually worth it.
+    """
     from .browser import BrowserFetcher
-    from .discover import discover_bestsellers
     from .http import PoliteSession
+    from .opportunity import (build_opportunity, format_opportunities,
+                              rank_opportunities, write_opportunities_csv)
     from .sources.base import ScrapeBlocked, SOURCES, make_scraper
+    from .trends.engine import TrendEngine, build_providers
 
     comparator = "ebay" if args.comparator == "both" else args.comparator
     wanted = [comparator]
@@ -151,6 +157,10 @@ def _hunt(args) -> int:
 
     session = PoliteSession(min_delay=args.delay)
     source = (args.source or ["argos"])[0]
+    signals = args.signal or ["amazon", "seasonal", "manual"]
+    needs_browser = any(s in ("amazon", "tiktok") for s in signals) or \
+        comparator in ("amazon", "google")
+
     fetch_mode = args.via
     cdp = None
     if args.via == "chrome":
@@ -158,7 +168,7 @@ def _hunt(args) -> int:
         ok, msg = ensure_chrome(
             args.cdp_url, open_url="https://www.amazon.co.uk/gp/movers-and-shakers")
         print(f"  {msg}")
-        if not ok:
+        if not ok and needs_browser:
             return 1
         browser = BrowserFetcher(cdp_url=args.cdp_url, min_delay=args.delay)
         fetch_mode = "browser"
@@ -166,47 +176,70 @@ def _hunt(args) -> int:
     elif args.show_browser:
         browser = BrowserFetcher(headless=False, min_delay=args.delay)
     else:
-        browser = BrowserFetcher(headless=True, min_delay=args.delay)
+        browser = BrowserFetcher(headless=True, min_delay=args.delay) if needs_browser else None
 
-    print("Discovering what's selling right now on Amazon …")
-    ideas = discover_bestsellers(browser, limit=args.limit)
-    if not ideas:
-        print("Couldn't read Amazon's best-seller pages (bot check or markup change).\n"
-              "Use --via chrome and browse amazon.co.uk once in that window first.",
+    # -- stage 1: decide what to look at ------------------------------------
+    providers = build_providers(signals, manual_terms=args.trend_term,
+                                amazon_limit=args.limit, tiktok_url=args.tiktok_url)
+    engine = TrendEngine(providers)
+    print(f"Discovering candidate categories from: {', '.join(signals)} …")
+    targets = engine.discover(session=session, browser=browser,
+                              limit=args.limit, fresh=args.fresh)
+    if not targets:
+        print("No candidate categories from the enabled signals. Add --trend-term, "
+              "or enable --signal seasonal/amazon (Amazon needs --via chrome).",
               file=sys.stderr)
+        if browser is not None:
+            browser.close()
         return 1
-    print(f"  {len(ideas)} trending item(s) to hunt:")
-    for idea in ideas:
-        px = f" ~£{idea.amazon_price:.2f}" if idea.amazon_price else ""
-        print(f"    • {idea.term}{px}  [{idea.reason}]")
+    print(f"  {len(targets)} categor(ies) to investigate, by discovery priority:")
+    for t in targets:
+        seas = f", seas {t.seasonal_strength:.2f}" if t.seasonal_strength else ""
+        leads = f"  [leads: {', '.join(t.leads)}]" if t.leads else ""
+        print(f"    • {t.term}  (score {t.discovery_score:.2f}; {', '.join(t.sources)}{seas}){leads}")
 
-    products = []
-    scraper = make_scraper(source, session, browser, fetch_mode=fetch_mode)
-    for idea in ideas:
-        try:
-            found = scraper.scrape(idea.term, max_products=args.per_item)
-            products.extend(found)
-            print(f"  {SOURCES[source].label}: '{idea.term}' -> {len(found)} product(s)")
-        except ScrapeBlocked as exc:
-            print(f"  {idea.term}: {str(exc).splitlines()[-1]}", file=sys.stderr)
-    try:  # done scraping sources; free the source browser (CDP: just our tab)
-        browser.close()
-    except Exception:  # noqa: BLE001
-        pass
-    if not products:
-        print(f"None of the trending items were found at {SOURCES[source].label}.",
-              file=sys.stderr)
-        return 1
-
+    # -- stage 2: search retail, validate, score ----------------------------
     clients, closeables = _make_clients(wanted, args, session, cdp, client_id, client_secret)
-    print(f"\nChecking {len(products)} product(s) for resale margin on {comparator} …")
+    client = clients[0]
+    opportunities = []
+    print(f"\nSearching {SOURCES[source].label} and validating resale on {comparator} …")
     try:
-        comparisons = compare_products(products, clients[0], min_score=args.min_score,
-                                       min_listings=args.min_listings)
-        _output(comparisons, args)
+        scraper = make_scraper(source, session, browser, fetch_mode=fetch_mode)
+        for t in targets:
+            try:
+                products = scraper.scrape(t.term, max_products=args.per_item)
+            except ScrapeBlocked as exc:
+                print(f"  {t.term}: {str(exc).splitlines()[-1]}", file=sys.stderr)
+                continue
+            if not products:
+                continue
+            comps = compare_products(products, client, min_score=args.min_score,
+                                     min_listings=args.min_listings)
+            for c in comps:
+                opp = build_opportunity(c, args.fees, args.postage,
+                                        t.trend_strength, t.seasonal_strength)
+                if opp is not None:
+                    opportunities.append(opp)
+            print(f"  {t.term}: {len(products)} product(s), {len(comps)} priced")
     finally:
         for c in closeables:
             c.close()
+        if browser is not None:
+            try:
+                browser.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    ranked = rank_opportunities(opportunities, min_net=args.min_net,
+                                min_roi=args.min_roi, min_match=args.min_match)
+    if not ranked:
+        print("\nNo opportunities cleared the thresholds "
+              f"(checked {len(opportunities)}). Try lowering --min-net/--min-roi/"
+              "--min-match, or widening --per-item/--limit.")
+        return 0
+    print("\n" + format_opportunities(ranked))
+    path = write_opportunities_csv(ranked, args.out)
+    print(f"\n{len(ranked)} opportunity(ies) written to {path}")
     return 0
 
 
@@ -263,23 +296,43 @@ def main(argv: list[str] | None = None) -> int:
 
     hunt = sub.add_parser(
         "hunt",
-        help="Auto-discover trending items (Amazon best sellers) and check them for "
-             "retail-arbitrage profit — no search terms to type")
+        help="Demand-guided discovery: pick categories from trend/seasonal/marketplace "
+             "signals, hunt them at retail, rank by profit & ROI — no terms to type")
+    hunt.add_argument("--signal", action="append",
+                      choices=["amazon", "seasonal", "manual", "tiktok"],
+                      help="Trend signal(s) to discover categories from; repeatable "
+                           "(default: amazon seasonal manual). 'amazon' = Movers & Shakers "
+                           "(needs --via chrome); 'seasonal' = UK seasonal calendar; "
+                           "'manual' = your --trend-term(s); 'tiktok' = experimental.")
+    hunt.add_argument("--trend-term", action="append", metavar="TERM",
+                      help="A category you've spotted yourself (e.g. 'teeth whitening "
+                           "strips'); repeatable. Feeds the 'manual' signal.")
     hunt.add_argument("--source", action="append", choices=list(_SRC),
                       help="Retail site to hunt on (default: argos)")
     hunt.add_argument("--comparator", choices=["google", "ebay", "amazon"], default="ebay",
-                      help="Resale price source to check margin against (default: ebay — "
+                      help="Resale price source to validate margin against (default: ebay — "
                            "fast API, no browser). amazon/google drive a real browser.")
     hunt.add_argument("--limit", type=int, default=12,
-                      help="Max trending items to consider (default: 12)")
-    hunt.add_argument("--per-item", type=int, default=2,
-                      help="Max retail products to take per trending item (default: 2)")
+                      help="Max candidate categories to investigate (default: 12)")
+    hunt.add_argument("--per-item", type=int, default=3,
+                      help="Max retail products to take per category (default: 3)")
+    hunt.add_argument("--min-roi", type=float, default=None, metavar="FRAC",
+                      help="Minimum ROI (net/buy) to keep an opportunity, e.g. 0.15 = 15%%. "
+                           "Applied before ranking; sub-threshold items are excluded.")
+    hunt.add_argument("--min-match", type=float, default=None, metavar="FRAC",
+                      help="Minimum product-match confidence 0-1 to keep an opportunity "
+                           "(e.g. 0.6). Guards against wrong cross-references.")
+    hunt.add_argument("--tiktok-url", default=None,
+                      help="Public TikTok-Shop aggregator page for the experimental "
+                           "'tiktok' signal (or set ARBFINDER_TIKTOK_URL).")
+    hunt.add_argument("--fresh", action="store_true",
+                      help="Ignore the trend cache and re-fetch every signal.")
     hunt.add_argument("--ebay-env", choices=["PRODUCTION", "SANDBOX"], default="PRODUCTION")
     hunt.add_argument("--delay", type=float, default=2.5,
                       help="Minimum seconds between requests to the same host (default: 2.5)")
     hunt.add_argument("--via", choices=["auto", "chrome", "jina", "browser"], default="chrome",
                       help="How to fetch pages. 'chrome' (default): drive your own Chrome over "
-                           "CDP — recommended, Amazon's best-seller pages block fresh browsers.")
+                           "CDP — recommended when the 'amazon' signal is on.")
     hunt.add_argument("--cdp-url", default="http://127.0.0.1:9222",
                       help="DevTools endpoint of your Chrome for --via chrome")
     hunt.add_argument("--show-browser", action="store_true")

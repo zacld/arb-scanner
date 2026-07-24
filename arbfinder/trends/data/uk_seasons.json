@@ -1,0 +1,107 @@
+{
+  "tower fan": {
+    "start": "04-15", "peak_start": "06-01", "peak_end": "08-15", "end": "09-15",
+    "keywords": ["tower fan", "desk fan", "pedestal fan", "air circulator"],
+    "preferred_retailers": ["argos", "currys", "johnlewis"]
+  },
+  "portable air conditioner": {
+    "start": "05-01", "peak_start": "06-15", "peak_end": "08-15", "end": "09-01",
+    "keywords": ["portable air conditioner", "aircon", "air cooler"],
+    "preferred_retailers": ["argos", "currys"]
+  },
+  "paddling pool": {
+    "start": "05-01", "peak_start": "06-01", "peak_end": "08-01", "end": "08-31",
+    "keywords": ["paddling pool", "kids pool"],
+    "preferred_retailers": ["argos"]
+  },
+  "bbq": {
+    "start": "04-15", "peak_start": "05-25", "peak_end": "08-01", "end": "09-01",
+    "keywords": ["bbq", "barbecue", "pizza oven"],
+    "preferred_retailers": ["argos", "johnlewis"]
+  },
+  "garden furniture": {
+    "start": "03-15", "peak_start": "05-01", "peak_end": "07-15", "end": "08-15",
+    "keywords": ["garden furniture", "rattan", "patio set"],
+    "preferred_retailers": ["argos", "johnlewis"]
+  },
+  "pressure washer": {
+    "start": "03-01", "peak_start": "04-01", "peak_end": "06-15", "end": "07-15",
+    "keywords": ["pressure washer", "jet wash"],
+    "preferred_retailers": ["argos", "currys"]
+  },
+  "lawnmower": {
+    "start": "03-01", "peak_start": "04-15", "peak_end": "06-30", "end": "08-01",
+    "keywords": ["lawnmower", "grass trimmer", "strimmer"],
+    "preferred_retailers": ["argos"]
+  },
+  "dehumidifier": {
+    "start": "09-15", "peak_start": "10-15", "peak_end": "01-31", "end": "03-01",
+    "keywords": ["dehumidifier", "damp", "condensation"],
+    "preferred_retailers": ["argos", "currys"]
+  },
+  "electric heater": {
+    "start": "09-15", "peak_start": "11-01", "peak_end": "01-31", "end": "02-28",
+    "keywords": ["electric heater", "fan heater", "oil heater"],
+    "preferred_retailers": ["argos", "currys"]
+  },
+  "electric blanket": {
+    "start": "09-15", "peak_start": "10-15", "peak_end": "01-15", "end": "02-15",
+    "keywords": ["electric blanket", "heated blanket", "heated throw"],
+    "preferred_retailers": ["argos"]
+  },
+  "laptop": {
+    "start": "07-15", "peak_start": "08-15", "peak_end": "09-15", "end": "10-01",
+    "keywords": ["laptop", "chromebook"],
+    "preferred_retailers": ["argos", "currys", "johnlewis"]
+  },
+  "printer": {
+    "start": "07-15", "peak_start": "08-15", "peak_end": "09-15", "end": "10-01",
+    "keywords": ["printer", "ink cartridge"],
+    "preferred_retailers": ["argos", "currys"]
+  },
+  "calculator": {
+    "start": "07-20", "peak_start": "08-20", "peak_end": "09-10", "end": "09-25",
+    "keywords": ["calculator", "scientific calculator"],
+    "preferred_retailers": ["argos"]
+  },
+  "school bag": {
+    "start": "07-20", "peak_start": "08-15", "peak_end": "09-10", "end": "09-20",
+    "keywords": ["school bag", "backpack", "rucksack"],
+    "preferred_retailers": ["argos"]
+  },
+  "air fryer": {
+    "start": "11-15", "peak_start": "12-26", "peak_end": "01-31", "end": "02-28",
+    "keywords": ["air fryer", "airfryer"],
+    "preferred_retailers": ["argos", "currys"]
+  },
+  "fitness equipment": {
+    "start": "12-20", "peak_start": "01-01", "peak_end": "02-15", "end": "03-15",
+    "keywords": ["dumbbell", "kettlebell", "treadmill", "exercise bike"],
+    "preferred_retailers": ["argos"]
+  },
+  "bathroom scales": {
+    "start": "12-20", "peak_start": "01-01", "peak_end": "02-10", "end": "03-01",
+    "keywords": ["bathroom scales", "smart scale"],
+    "preferred_retailers": ["argos"]
+  },
+  "storage boxes": {
+    "start": "12-26", "peak_start": "01-05", "peak_end": "02-15", "end": "03-15",
+    "keywords": ["storage box", "storage container"],
+    "preferred_retailers": ["argos"]
+  },
+  "toys": {
+    "start": "10-15", "peak_start": "11-20", "peak_end": "12-22", "end": "12-31",
+    "keywords": ["toys", "lego", "action figure", "doll"],
+    "preferred_retailers": ["argos"]
+  },
+  "gaming console": {
+    "start": "10-15", "peak_start": "11-20", "peak_end": "12-24", "end": "12-31",
+    "keywords": ["playstation", "xbox", "nintendo switch", "console"],
+    "preferred_retailers": ["argos", "currys"]
+  },
+  "christmas decorations": {
+    "start": "11-01", "peak_start": "11-25", "peak_end": "12-20", "end": "12-27",
+    "keywords": ["christmas tree", "christmas lights", "baubles", "christmas decoration"],
+    "preferred_retailers": ["argos"]
+  }
+}
