@@ -379,10 +379,17 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     requested = int(os.environ.get("ARBFINDER_PORT", "5000"))
     port = _free_port(requested)
+    url = f"http://127.0.0.1:{port}"
     if port != requested:
-        print(f"Port {requested} was busy (often macOS AirPlay Receiver) — "
-              f"using {port} instead.")
-    print(f"retail-arbitrage-finder dashboard → http://127.0.0.1:{port}  (Ctrl+C to stop)")
+        print(f"Port {requested} was busy (often macOS AirPlay Receiver, which makes the "
+              f"browser DOWNLOAD the page instead of showing it) — using {port} instead.")
+    print(f"retail-arbitrage-finder dashboard → {url}  (Ctrl+C to stop)")
+    # Open the right URL automatically so there's no chance of hitting AirPlay
+    # on :5000 by mistake. Unless disabled, and best-effort only.
+    if os.environ.get("ARBFINDER_NO_BROWSER") != "1":
+        import threading
+        import webbrowser
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     # threaded=False so Playwright's sync API stays on one thread.
     app.run(host="127.0.0.1", port=port, threaded=False)
 
