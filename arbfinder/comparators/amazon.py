@@ -129,7 +129,7 @@ class AmazonClient:
         self._ctx = None
         self._page = None
         self._is_cdp = False
-        self._blocked = False
+        self.blocked = False
         self._last = 0.0
         self.unavailable_reason: str | None = None
 
@@ -213,7 +213,7 @@ class AmazonClient:
         term = query or gtin
         if not term:
             return []
-        if self._blocked or not self._ensure():
+        if self.blocked or not self._ensure():
             return []
         self._throttle()
         try:
@@ -244,21 +244,31 @@ class AmazonClient:
                     break
                 html = self._content()
             if html is None or _looks_blocked(html):
-                self._blocked = True
+                self.blocked = True
                 log.warning(
-                    "Amazon still blocked; stopping Amazon lookups for this run. "
-                    "Reuse your real Chrome (--via chrome) or try again shortly."
+                    "Amazon showed a robot check. The Amazon tab is left open in your "
+                    "Chrome — solve it there, then scan again (it stays cleared after)."
                 )
                 return []
 
         results = parse_amazon_results(html)
+        if not results:
+            try:
+                Path("debug_amazon_page.html").write_text(html, encoding="utf-8")
+                log.warning("Amazon page had no parseable products — saved to "
+                            "debug_amazon_page.html for inspection.")
+            except OSError:
+                pass
         return results[:limit]
 
     def close(self) -> None:
         closers = []
         if self._is_cdp:
             # Never close the user's Chrome — just our own tab + the connection.
-            closers.append(lambda: self._page.close() if self._page else None)
+            # But if Amazon blocked us, LEAVE the tab open so the user can solve
+            # the check in it, then re-scan (the profile stays cleared after).
+            if not self.blocked:
+                closers.append(lambda: self._page.close() if self._page else None)
         elif self._ctx:
             closers.append(lambda: self._ctx.close())
         closers.append(lambda: self._pw.stop() if self._pw else None)

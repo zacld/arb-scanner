@@ -272,6 +272,12 @@ def _run_scan(form, files=None) -> str:
         comparisons = sort_comparisons(
             compare_products(products, client), fees_pct=fees, postage=postage
         )
+        if comparator == "amazon" and getattr(client, "blocked", False):
+            return ('<p class="err">Amazon showed a robot check, so it returned no prices. '
+                    'A Chrome tab is now open at Amazon — <b>solve the check in that window</b> '
+                    '(tick the box / type the characters until you can see search results), '
+                    'then hit <b>Run scan</b> again. It stays cleared after the first time.<br><br>'
+                    'This only happens on the first Amazon visit in that Chrome profile.</p>')
         prefix = f'<p class="note">{note}.</p>'
         if min_net is not None:
             kept = [c for c in comparisons
