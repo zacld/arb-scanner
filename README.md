@@ -134,7 +134,11 @@ how trendy. Output is a table + `results.csv` of scored opportunities.
 Cross-source agreement boosts discovery: a category on Amazon **and** your manual
 list **and** in-season scans first. Signals are cached ~6h (`--fresh` to bypass).
 
-In the **dashboard**, tick **“🔥 Or hunt trending”** for the browser version.
+In the **dashboard**, tick **“🔥 Or hunt trending”**: choose signals (Amazon
+Movers & Shakers on, Best Sellers off by default, Seasonal, Manual), type manual
+trends, set Min net £ / ROI % / match %, and get the same deduped, profit-first
+opportunity table with the discovered categories (and which sources agreed)
+shown above it, plus a **Download results.csv** link.
 
 ### Autonomous scraping via your own Chrome (`--via chrome`)
 

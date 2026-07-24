@@ -110,7 +110,7 @@ def test_min_net_filters_out_unprofitable_rows(monkeypatch):
     assert "net ≥ £0.00" in out
 
 
-def test_hunt_mode_discovers_and_hunts(monkeypatch):
+def test_hunt_mode_discovers_and_hunts(monkeypatch, tmp_path):
     # Ticking "hunt trending" discovers items (stubbed), hunts them at the
     # source (stubbed scraper), and reports — no search term needed.
     from arbfinder import browser as browser_mod, discover as discover_mod
@@ -128,6 +128,10 @@ def test_hunt_mode_discovers_and_hunts(monkeypatch):
         def scrape(self, term, max_products=None):
             return [Product(name=term, price=10.0, url="u", source="argos")]
 
+    from arbfinder.trends import cache as trends_cache
+    monkeypatch.setattr(trends_cache, "CACHE_PATH", tmp_path / "trends.json")
+    trends_cache._MEMO.clear()
+
     monkeypatch.setattr(browser_mod, "BrowserFetcher", _FakeFetcher)
     monkeypatch.setattr(discover_mod, "discover_bestsellers",
                         lambda *a, **k: [Idea(term="Ninja Air Fryer", reason="Movers")])
@@ -138,11 +142,14 @@ def test_hunt_mode_discovers_and_hunts(monkeypatch):
     monkeypatch.setattr(dashboard, "compare_products", lambda p, c, **k: [comp])
     config.save_credentials("APPID", "SECRET")
 
+    # Hunt with just the manual signal so the result is deterministic.
     out = dashboard._run_scan(
-        {"hunt": "1", "comparator": "ebay", "source": "argos",
-         "fetch_mode": "browser", "ebay_id": "", "ebay_secret": ""})
-    assert "Discovered 1 trending items" in out
-    assert "Ninja Air Fryer" in out
+        {"hunt": "1", "comparator": "ebay", "source": "argos", "fetch_mode": "browser",
+         "sig_manual": "1", "trend_terms": "air fryer", "ebay_id": "", "ebay_secret": ""})
+    assert "Discovered" in out and "categor" in out       # discovery summary shown
+    assert "Ninja Air Fryer" in out                        # opportunity row
+    assert "opportunity(ies)" in out                       # profit-first table
+    assert 'href="/download"' in out                       # CSV export link
 
 
 def test_dashboard_offers_my_chrome_fetch_mode():

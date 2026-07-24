@@ -24,15 +24,19 @@ from bs4 import BeautifulSoup
 
 log = logging.getLogger(__name__)
 
-# Movers & Shakers first — it's ranked by sales-rank *change*, i.e. what's
-# spiking right now (seasonal/event demand), which is exactly the signal we want.
-DEFAULT_SOURCES: list[tuple[str, str]] = [
+# Movers & Shakers is ranked by sales-rank *change* — what's spiking right now
+# (seasonal/event demand). Best Sellers is steady-state top sellers (noisier for
+# arbitrage). Kept as separate lists so the two can be toggled independently.
+MOVERS_SOURCES: list[tuple[str, str]] = [
     ("Movers & Shakers", "https://www.amazon.co.uk/gp/movers-and-shakers"),
+]
+BESTSELLER_SOURCES: list[tuple[str, str]] = [
     ("Best Sellers", "https://www.amazon.co.uk/gp/bestsellers"),
     ("Home & Kitchen", "https://www.amazon.co.uk/gp/bestsellers/kitchen"),
     ("Garden", "https://www.amazon.co.uk/gp/bestsellers/garden"),
     ("Electronics", "https://www.amazon.co.uk/gp/bestsellers/electronics"),
 ]
+DEFAULT_SOURCES = MOVERS_SOURCES + BESTSELLER_SOURCES
 
 _ASIN = re.compile(r"/dp/([A-Z0-9]{10})")
 _PRICE = re.compile(r"£\s?([\d,]+\.\d{2})")

@@ -41,6 +41,29 @@ app = Flask(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent   # dir containing arbfinder/
 BRANCH = "claude/retail-arbitrage-finder-tjc9k2"
+RESULTS_PATH = REPO_ROOT / "results.csv"
+
+SIGNAL_FIELDS = {"movers": "sig_movers", "bestsellers": "sig_bestsellers",
+                 "seasonal": "sig_seasonal", "manual": "sig_manual"}
+DEFAULT_SIGNALS = ["movers", "seasonal", "manual"]  # best sellers off by default
+
+
+def _opt_pct(raw: str):
+    """Parse a percentage-style field ('15') to a fraction (0.15); None if blank."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw) / 100.0
+    except ValueError:
+        return None
+
+
+def _sig_chk(form, name: str, default: bool) -> str:
+    """Checkbox state: reflect the submitted form, else the initial default."""
+    if form:  # a submitted form (POST) — checkbox present only if it was ticked
+        return "checked" if form.get(SIGNAL_FIELDS[name]) else ""
+    return "checked" if default else ""
 
 
 def _git(gitargs, timeout: float = 90):
@@ -99,8 +122,28 @@ PAGE = """<!doctype html>
   <input name="url" placeholder="air fryer" value="{url}"></label>
  <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:600">
   <input type="checkbox" name="hunt" value="1" {hunt_chk} style="width:auto">
-  🔥 Or hunt trending — auto-pick hot items from Amazon best sellers &amp; movers
-  (ignores the search box; needs “My Chrome”)</label>
+  🔥 Or hunt trending — auto-pick categories from demand signals, rank by profit
+  (ignores the search box)</label>
+ <div class="wide" style="background:rgba(127,127,127,.06);border-radius:8px;padding:.6rem .8rem">
+  <div style="font-size:.85rem;font-weight:600;margin-bottom:.3rem">Hunt signals</div>
+  <div style="display:flex;flex-wrap:wrap;gap:.4rem 1.1rem;font-weight:400;font-size:.85rem">
+   <label style="flex-direction:row;align-items:center;gap:.35rem;font-weight:400">
+    <input type="checkbox" name="sig_movers" value="1" {sig_movers} style="width:auto">
+    Amazon Movers &amp; Shakers</label>
+   <label style="flex-direction:row;align-items:center;gap:.35rem;font-weight:400">
+    <input type="checkbox" name="sig_bestsellers" value="1" {sig_bestsellers} style="width:auto">
+    Amazon Best Sellers <span style="color:#888">(noisier)</span></label>
+   <label style="flex-direction:row;align-items:center;gap:.35rem;font-weight:400">
+    <input type="checkbox" name="sig_seasonal" value="1" {sig_seasonal} style="width:auto">
+    Seasonal calendar</label>
+   <label style="flex-direction:row;align-items:center;gap:.35rem;font-weight:400">
+    <input type="checkbox" name="sig_manual" value="1" {sig_manual} style="width:auto">
+    Manual</label>
+  </div>
+  <label style="margin-top:.5rem;font-weight:400">Manual trends
+    <span style="font-weight:400;color:#888">(comma-separated, feeds “Manual”)</span>
+   <input name="trend_terms" placeholder="teeth whitening strips, stanley cup" value="{trend_terms}"></label>
+ </div>
  <label>Fetch via
   <select name="fetch_mode">
    <option value="chrome" {fm_chrome}>My Chrome (autonomous — recommended)</option>
@@ -136,8 +179,12 @@ PAGE = """<!doctype html>
   <input name="fees" type="number" step="0.5" value="{fees}"></label>
  <label>Postage £ <span style="font-weight:400">(bulky items ~£6–10)</span>
   <input name="postage" type="number" step="0.01" value="{postage}"></label>
- <label>Min net £ <span style="font-weight:400">(blank = show all · 0 = anything profitable)</span>
+ <label>Min net £ <span style="font-weight:400">(blank = all · 0 = profitable)</span>
   <input name="min_net" type="number" step="0.01" value="{min_net}"></label>
+ <label>Min ROI % <span style="font-weight:400">(hunt only, e.g. 15)</span>
+  <input name="min_roi" type="number" step="1" value="{min_roi}"></label>
+ <label>Min match % <span style="font-weight:400">(hunt only, 0–100)</span>
+  <input name="min_match" type="number" step="1" value="{min_match}"></label>
  <label>eBay Client ID <span style="font-weight:400">(App ID — only for eBay)</span>
   <input name="ebay_id" autocomplete="off" value="{ebay_id}"></label>
  <label>eBay Client Secret <span style="font-weight:400">(Cert ID — stays on this machine)</span>
@@ -195,6 +242,115 @@ def _results_table(comparisons, market: str, fees: float, postage: float) -> str
             f'<p class="note">{note} {len(comparisons)} result(s), biggest gap first.</p>')
 
 
+def _discovery_summary(targets) -> str:
+    items = []
+    for t in targets:
+        seas = f", seasonal {t.seasonal_strength:.2f}" if t.seasonal_strength else ""
+        agree = ", ".join(html.escape(s) for s in t.sources)
+        leads = (f' <span style="color:#888">— leads: {html.escape(", ".join(t.leads))}</span>'
+                 if t.leads else "")
+        items.append(
+            f'<li><b>{html.escape(t.term)}</b> '
+            f'<span style="color:#888">(score {t.discovery_score:.2f}; {agree}{seas})</span>'
+            f'{leads}</li>')
+    return (f'<p class="note">Discovered <b>{len(targets)}</b> categories '
+            '(discovery priority — more sources agreeing ranks higher):</p>'
+            f'<ul style="font-size:.85rem;line-height:1.6">{"".join(items)}</ul>')
+
+
+def _opportunities_table(opps) -> str:
+    market = getattr(opps[0].marketplace_match, "market", "resale")
+    head = (f"<tr><th>Product</th><th>Source</th><th>Buy £</th><th>{html.escape(market)} £</th>"
+            "<th>Net £</th><th>ROI</th><th>Score</th><th>Dem</th><th>Match</th><th>T/S</th></tr>")
+    rows = []
+    for o in opps:
+        c, p = o.marketplace_match, o.retailer_product
+        plink = (f'<a href="{html.escape(p.url)}" target="_blank" rel="noopener">'
+                 f'{html.escape(p.name)}</a>')
+        murl = getattr(c, "market_url", "")
+        mcell = (f'<a href="{html.escape(murl)}" target="_blank" rel="noopener">'
+                 f'{o.expected_sale_price:.2f}</a>' if murl else f"{o.expected_sale_price:.2f}")
+        src = SOURCES[p.source].label if p.source in SOURCES else p.source
+        ts = max(o.trend_strength, o.seasonal_strength)
+        rows.append(
+            f"<tr><td>{plink}</td><td>{html.escape(src)}</td><td>{o.buy_price:.2f}</td>"
+            f"<td>{mcell}</td>{_fmt_signed(o.estimated_net_profit)}"
+            f"<td>{o.roi * 100:.0f}%</td><td>{o.opportunity_score:.2f}</td>"
+            f"<td>{o.demand_confidence:.2f}</td><td>{o.match_confidence:.2f}</td>"
+            f"<td>{ts:.2f}</td></tr>")
+    return (f"<table>{head}{''.join(rows)}</table>"
+            '<p class="note">Sorted profit-first: net → ROI → demand → match → '
+            f'trend/seasonal. Dem/Match/T-S are 0–1 confidences. {len(opps)} opportunity(ies).</p>')
+
+
+def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
+              signals, trend_terms, limit, min_net, min_roi, min_match) -> str:
+    """Demand-guided discovery → retail search → profit-first opportunities."""
+    from .browser import BrowserFetcher
+    from .chrome_launch import ensure_chrome
+    from .http import PoliteSession
+    from .opportunity import (build_opportunity, rank_opportunities,
+                              write_opportunities_csv)
+    from .trends.engine import TrendEngine, build_providers
+
+    needs_browser = any(s in ("movers", "bestsellers") for s in signals)
+    session = PoliteSession()
+    if fetch_mode == "chrome":
+        ok, msg = ensure_chrome(cdp_url, open_url="https://www.amazon.co.uk/gp/movers-and-shakers")
+        if not ok and needs_browser:
+            return f'<p class="err">{html.escape(msg)}</p>'
+        fetcher = BrowserFetcher(cdp_url=cdp_url)
+        sc_mode = "browser"
+    else:
+        fetcher = BrowserFetcher(headless=False) if needs_browser else None
+        sc_mode = "auto"
+
+    providers = build_providers(signals, manual_terms=trend_terms, amazon_limit=limit)
+    engine = TrendEngine(providers)
+    targets, opportunities, seen = [], [], set()
+    try:
+        targets = engine.discover(session=session, browser=fetcher, limit=limit)
+        if targets:
+            scraper = make_scraper(source, session, fetcher, fetch_mode=sc_mode)
+            for t in targets:
+                try:
+                    prods = scraper.scrape(t.term, max_products=3)
+                except ScrapeBlocked:
+                    continue
+                prods = [p for p in prods if p.url not in seen]
+                seen.update(p.url for p in prods)
+                if not prods:
+                    continue
+                for c in compare_products(prods, client):
+                    o = build_opportunity(c, fees, postage, t.trend_strength, t.seasonal_strength)
+                    if o is not None:
+                        opportunities.append(o)
+    finally:
+        if fetcher is not None:
+            try:
+                fetcher.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    if not targets:
+        return ('<p class="err">No candidate categories from the chosen signals. For the '
+                'Amazon signals, make sure “My Chrome” is running and you\'ve visited '
+                'amazon.co.uk once in it (solve any robot check). Or tick “Manual” and add a '
+                'trend term.</p>')
+    if comparator == "amazon" and getattr(client, "blocked", False) and not opportunities:
+        return ('<p class="err">Amazon (the price check) showed a robot check — solve it in '
+                'the open Amazon tab, then hunt again.</p>')
+    ranked = rank_opportunities(opportunities, min_net=min_net, min_roi=min_roi, min_match=min_match)
+    summary = _discovery_summary(targets)
+    if not ranked:
+        return (summary + f'<p class="err">Discovered {len(targets)} categories but none of '
+                f'the {len(opportunities)} priced products cleared the thresholds. Lower Min '
+                'net £ / ROI % / match %, or add more signals.</p>')
+    write_opportunities_csv(ranked, RESULTS_PATH)
+    return (summary + _opportunities_table(ranked)
+            + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
+
+
 def _run_scan(form, files=None) -> str:
     files = files or {}
     query = form.get("url", "").strip()
@@ -216,6 +372,11 @@ def _run_scan(form, files=None) -> str:
             min_net = float(raw_min_net)
         except ValueError:
             return '<p class="err">Min net £ must be a number (or left blank).</p>'
+    min_roi = _opt_pct(form.get("min_roi"))       # "15" -> 0.15
+    min_match = _opt_pct(form.get("min_match"))    # "60" -> 0.60
+    signals = [name for name, field in SIGNAL_FIELDS.items() if form.get(field)] or DEFAULT_SIGNALS
+    trend_terms = [t.strip() for t in (form.get("trend_terms", "") or "")
+                   .replace("\n", ",").split(",") if t.strip()]
 
     upload = files.get("page")
     upload_html = ""
@@ -257,41 +418,10 @@ def _run_scan(form, files=None) -> str:
     try:
         # -- gather products: hunt / uploaded page / live scrape -------------
         if hunt:
-            from .browser import BrowserFetcher
-            from .chrome_launch import ensure_chrome
-            from .discover import discover_bestsellers
-            from .http import PoliteSession
-            if fetch_mode == "chrome":
-                ok, chrome_msg = ensure_chrome(
-                    cdp_url, open_url="https://www.amazon.co.uk/gp/movers-and-shakers")
-                if not ok:
-                    return f'<p class="err">{html.escape(chrome_msg)}</p>'
-                fetcher = BrowserFetcher(cdp_url=cdp_url)
-                sc_mode = "browser"
-            else:
-                fetcher = BrowserFetcher(headless=False)
-                sc_mode = "auto"
-            try:
-                ideas = discover_bestsellers(fetcher, limit=min(max_products, 15))
-                products = []
-                scraper = make_scraper(source, PoliteSession(), fetcher, fetch_mode=sc_mode)
-                for idea in ideas:
-                    try:
-                        products.extend(scraper.scrape(idea.term, max_products=2))
-                    except ScrapeBlocked:
-                        pass
-            finally:
-                try:
-                    fetcher.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            if not ideas:
-                return ('<p class="err">Couldn\'t read Amazon\'s best-seller pages — make '
-                        'sure “My Chrome” is running and you\'ve visited amazon.co.uk once '
-                        'in that window (solve any robot check), then try again.</p>')
-            note = (f"Discovered {len(ideas)} trending items on Amazon, found "
-                    f"{len(products)} at {SOURCES[source].label}")
-        elif upload_html:
+            return _run_hunt(client, comparator, source, fetch_mode, cdp_url,
+                             fees, postage, signals, trend_terms, max_products,
+                             min_net, min_roi, min_match)
+        if upload_html:
             products = SOURCES[source].parse(upload_html)
             for p in products:
                 p.source = source
@@ -404,9 +534,16 @@ def _render(results: str = "", form=None) -> str:
         fees=html.escape(str(form.get("fees", "13"))),
         postage=html.escape(str(form.get("postage", "0"))),
         min_net=html.escape(str(form.get("min_net", ""))),
+        min_roi=html.escape(str(form.get("min_roi", ""))),
+        min_match=html.escape(str(form.get("min_match", ""))),
         cdp_url=html.escape(cdp_url),
         chrome_status=chrome_status,
         hunt_chk="checked" if form.get("hunt") else "",
+        trend_terms=html.escape(form.get("trend_terms", "")),
+        sig_movers=_sig_chk(form, "movers", True),
+        sig_bestsellers=_sig_chk(form, "bestsellers", False),
+        sig_seasonal=_sig_chk(form, "seasonal", True),
+        sig_manual=_sig_chk(form, "manual", True),
         fm_chrome="selected" if fetch_mode != "browser" else "",
         fm_browser="selected" if fetch_mode == "browser" else "",
         # Pre-fill the Client ID from saved/env; never pre-fill the secret field.
@@ -441,6 +578,14 @@ def chrome():
     ok, msg = ensure_chrome("http://127.0.0.1:9222")
     cls = "note" if ok else "err"
     return _render(results=f'<p class="{cls}">{html.escape(msg)}</p>')
+
+
+@app.route("/download")
+def download():
+    from flask import send_file
+    if RESULTS_PATH.exists():
+        return send_file(RESULTS_PATH, as_attachment=True, download_name="opportunities.csv")
+    return _render(results='<p class="err">No results yet — run a hunt first.</p>')
 
 
 @app.route("/update")

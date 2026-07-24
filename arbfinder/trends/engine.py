@@ -18,14 +18,16 @@ log = logging.getLogger(__name__)
 # Discovery weighting only (scan order). Amazon = real demand, manual = you
 # asked for it, so they lead; seasonal contributes via its own term.
 SOURCE_WEIGHT = {
-    "amazon_movers": 1.5,
+    "amazon_movers": 1.5,       # spiking demand — highest
     "manual": 1.3,
     "tiktok_trending": 1.0,
     "seasonal": 1.0,
+    "amazon_bestsellers": 0.8,  # steady-state, noisier — below movers
 }
 _SEASON_W = 1.0
 # Sources whose products are real even if the lexicon doesn't recognise them.
-_KEEP_UNMAPPED = frozenset({"amazon_movers", "manual", "tiktok_trending"})
+_KEEP_UNMAPPED = frozenset(
+    {"amazon_movers", "amazon_bestsellers", "manual", "tiktok_trending"})
 
 
 class TrendEngine:
@@ -65,7 +67,7 @@ class TrendEngine:
             score = (trend_evidence + seasonal_strength * _SEASON_W) * agreement
             leads = []
             for s in sigs:
-                if s.source == "amazon_movers" and (s.model or s.original_title):
+                if s.source.startswith("amazon") and (s.model or s.original_title):
                     lead = s.model or s.original_title
                     if lead not in leads:
                         leads.append(lead)
@@ -83,13 +85,15 @@ class TrendEngine:
 def build_providers(names, *, manual_terms=None, amazon_limit=15,
                     today=None, tiktok_url=None) -> list[TrendSignalProvider]:
     """Instantiate providers by name (unknown names are skipped)."""
-    from .providers.amazon import AmazonMoversProvider
+    from .providers.amazon import AmazonBestSellersProvider, AmazonMoversProvider
     from .providers.manual import ManualProvider
     from .providers.seasons import SeasonalProvider
     from .providers.tiktok import TikTokShopProvider
 
     factories = {
-        "amazon": lambda: AmazonMoversProvider(limit=amazon_limit),
+        "movers": lambda: AmazonMoversProvider(limit=amazon_limit),
+        "amazon": lambda: AmazonMoversProvider(limit=amazon_limit),  # alias for movers
+        "bestsellers": lambda: AmazonBestSellersProvider(limit=amazon_limit),
         "seasonal": lambda: SeasonalProvider(today=today),
         "manual": lambda: ManualProvider(terms=manual_terms),
         "tiktok": lambda: TikTokShopProvider(url=tiktok_url),

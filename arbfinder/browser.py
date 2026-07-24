@@ -42,11 +42,15 @@ class BrowserFetcher:
         jitter: float = 0.75,
         timeout_s: float = 45.0,
         cdp_url: str | None = None,
+        cdp_timeout_ms: int = 12000,
     ):
         self.headless = headless
         self.min_delay = min_delay
         self.jitter = jitter
         self.timeout_s = timeout_s
+        # Short connect timeout so a stale/dead debugging port fails fast
+        # instead of hanging the caller for Playwright's 180s default.
+        self.cdp_timeout_ms = cdp_timeout_ms
         # When set, connect to an already-running Chrome over the DevTools
         # Protocol instead of launching one — reuses the user's real browser
         # session (and its bot-protection clearance) for autonomous scraping.
@@ -75,7 +79,8 @@ class BrowserFetcher:
         # -- connect to a user-launched Chrome over CDP ---------------------
         if self.cdp_url:
             try:
-                browser = self._pw.chromium.connect_over_cdp(self.cdp_url)
+                browser = self._pw.chromium.connect_over_cdp(
+                    self.cdp_url, timeout=self.cdp_timeout_ms)
                 ctx = browser.contexts[0] if browser.contexts else browser.new_context()
                 self._ctx = ctx
                 # New tab in the existing context: shares its cookies (incl. the

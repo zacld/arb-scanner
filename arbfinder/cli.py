@@ -157,8 +157,8 @@ def _hunt(args) -> int:
 
     session = PoliteSession(min_delay=args.delay)
     source = (args.source or ["argos"])[0]
-    signals = args.signal or ["amazon", "seasonal", "manual"]
-    needs_browser = any(s in ("amazon", "tiktok") for s in signals) or \
+    signals = args.signal or ["movers", "seasonal", "manual"]
+    needs_browser = any(s in ("movers", "bestsellers", "amazon", "tiktok") for s in signals) or \
         comparator in ("amazon", "google")
 
     fetch_mode = args.via
@@ -304,11 +304,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Demand-guided discovery: pick categories from trend/seasonal/marketplace "
              "signals, hunt them at retail, rank by profit & ROI — no terms to type")
     hunt.add_argument("--signal", action="append",
-                      choices=["amazon", "seasonal", "manual", "tiktok"],
+                      choices=["movers", "bestsellers", "amazon", "seasonal", "manual", "tiktok"],
                       help="Trend signal(s) to discover categories from; repeatable "
-                           "(default: amazon seasonal manual). 'amazon' = Movers & Shakers "
-                           "(needs --via chrome); 'seasonal' = UK seasonal calendar; "
-                           "'manual' = your --trend-term(s); 'tiktok' = experimental.")
+                           "(default: movers seasonal manual). 'movers' = Amazon Movers & "
+                           "Shakers (needs --via chrome); 'bestsellers' = Amazon Best Sellers "
+                           "(noisier, opt-in); 'seasonal' = UK seasonal calendar; 'manual' = "
+                           "your --trend-term(s); 'tiktok' = experimental.")
     hunt.add_argument("--trend-term", action="append", metavar="TERM",
                       help="A category you've spotted yourself (e.g. 'teeth whitening "
                            "strips'); repeatable. Feeds the 'manual' signal.")
