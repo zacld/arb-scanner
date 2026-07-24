@@ -66,6 +66,10 @@ PAGE = """<!doctype html>
 <form method="post" action="/scan" enctype="multipart/form-data">
  <label class="wide">① Search term — type a product and scan it live
   <input name="url" placeholder="air fryer" value="{url}"></label>
+ <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:600">
+  <input type="checkbox" name="hunt" value="1" {hunt_chk} style="width:auto">
+  🔥 Or hunt trending — auto-pick hot items from Amazon best sellers &amp; movers
+  (ignores the search box; needs “My Chrome”)</label>
  <label>Fetch via
   <select name="fetch_mode">
    <option value="chrome" {fm_chrome}>My Chrome (autonomous — recommended)</option>
@@ -165,6 +169,7 @@ def _run_scan(form, files=None) -> str:
     source = form.get("source") if form.get("source") in SOURCES else "argos"
     fetch_mode = form.get("fetch_mode") or "chrome"
     cdp_url = form.get("cdp_url", "").strip() or "http://127.0.0.1:9222"
+    hunt = bool(form.get("hunt"))
     try:
         max_products = int(form.get("max_products") or 10)
         fees = float(form.get("fees") or 13)
@@ -186,9 +191,9 @@ def _run_scan(form, files=None) -> str:
             upload_html = upload.read().decode("utf-8", errors="replace")
         except Exception as exc:  # noqa: BLE001
             return f'<p class="err">Could not read the uploaded file: {html.escape(str(exc))}</p>'
-    if not upload_html and not query:
-        return ('<p class="err">Enter a search term to scan live (recommended), or '
-                'upload a saved search page.</p>')
+    if not hunt and not upload_html and not query:
+        return ('<p class="err">Enter a search term to scan live (recommended), '
+                'tick “hunt trending”, or upload a saved search page.</p>')
 
     # -- build the comparator ------------------------------------------------
     closeable = None
@@ -217,8 +222,43 @@ def _run_scan(form, files=None) -> str:
         closeable = client
 
     try:
-        # -- gather products: uploaded page (reliable) or live scrape --------
-        if upload_html:
+        # -- gather products: hunt / uploaded page / live scrape -------------
+        if hunt:
+            from .browser import BrowserFetcher
+            from .chrome_launch import ensure_chrome
+            from .discover import discover_bestsellers
+            from .http import PoliteSession
+            if fetch_mode == "chrome":
+                ok, chrome_msg = ensure_chrome(
+                    cdp_url, open_url="https://www.amazon.co.uk/gp/movers-and-shakers")
+                if not ok:
+                    return f'<p class="err">{html.escape(chrome_msg)}</p>'
+                fetcher = BrowserFetcher(cdp_url=cdp_url)
+                sc_mode = "browser"
+            else:
+                fetcher = BrowserFetcher(headless=False)
+                sc_mode = "auto"
+            try:
+                ideas = discover_bestsellers(fetcher, limit=min(max_products, 15))
+                products = []
+                scraper = make_scraper(source, PoliteSession(), fetcher, fetch_mode=sc_mode)
+                for idea in ideas:
+                    try:
+                        products.extend(scraper.scrape(idea.term, max_products=2))
+                    except ScrapeBlocked:
+                        pass
+            finally:
+                try:
+                    fetcher.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if not ideas:
+                return ('<p class="err">Couldn\'t read Amazon\'s best-seller pages — make '
+                        'sure “My Chrome” is running and you\'ve visited amazon.co.uk once '
+                        'in that window (solve any robot check), then try again.</p>')
+            note = (f"Discovered {len(ideas)} trending items on Amazon, found "
+                    f"{len(products)} at {SOURCES[source].label}")
+        elif upload_html:
             products = SOURCES[source].parse(upload_html)
             for p in products:
                 p.source = source
@@ -333,6 +373,7 @@ def _render(results: str = "", form=None) -> str:
         min_net=html.escape(str(form.get("min_net", ""))),
         cdp_url=html.escape(cdp_url),
         chrome_status=chrome_status,
+        hunt_chk="checked" if form.get("hunt") else "",
         fm_chrome="selected" if fetch_mode != "browser" else "",
         fm_browser="selected" if fetch_mode == "browser" else "",
         # Pre-fill the Client ID from saved/env; never pre-fill the secret field.

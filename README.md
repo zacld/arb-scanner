@@ -96,6 +96,28 @@ and parse it:
 python -m arbfinder scan --from-file argos.html --source argos --comparator google
 ```
 
+### Auto-hunt trending items (`hunt`) — no search terms to type
+
+Don't want to guess *what* to search? The `hunt` command reads live demand
+signals — Amazon's **Movers & Shakers** (biggest sales-rank risers = what's
+spiking right now, e.g. fans in a heatwave, sportswear during a big event) and
+**Best Sellers** by category — turns them into candidate products, hunts each at
+a retail source (Argos), and reports only the profitable ones:
+
+```bash
+python -m arbfinder hunt --via chrome --comparator ebay --min-net 0
+```
+
+It's the same scrape → cross-reference → net-profit pipeline, but it picks the
+targets itself. `--comparator ebay` (default) is fastest — the best-seller pages
+say *what's hot*, eBay's Browse API prices the resale cheaply. `--limit N` caps
+how many trending items to consider (default 12), `--per-item N` how many retail
+matches to take each (default 2). Use `--via chrome` (the default for `hunt`) so
+Amazon's best-seller pages load through your real Chrome.
+
+In the **dashboard**, tick **“🔥 Or hunt trending”** to do the same from the web
+UI (leave the search box empty).
+
 ### Autonomous scraping via your own Chrome (`--via chrome`)
 
 To scrape without saving pages by hand, drive the browser that already gets

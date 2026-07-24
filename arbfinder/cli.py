@@ -91,6 +91,125 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("-v", "--verbose", action="store_true")
 
 
+def _resolve_ebay_creds(wanted, comparator):
+    """Read eBay creds from the env. May drop eBay from ``wanted`` (for 'both')
+    or ask the caller to exit. Returns (client_id, client_secret, wanted, exit)."""
+    cid = os.environ.get("EBAY_CLIENT_ID")
+    sec = os.environ.get("EBAY_CLIENT_SECRET")
+    if "ebay" in wanted and (not cid or not sec):
+        if comparator == "both":
+            print("EBAY_CLIENT_ID / EBAY_CLIENT_SECRET not set — continuing with "
+                  "PriceRunner only (eBay columns will be empty).", file=sys.stderr)
+            wanted = [w for w in wanted if w != "ebay"]
+        else:
+            print("EBAY_CLIENT_ID / EBAY_CLIENT_SECRET not set.\n"
+                  "Register a (free) app at https://developer.ebay.com/my/keys and export both,\n"
+                  "use --comparator pricerunner (no key needed), or run "
+                  "`python -m arbfinder demo` to see the pipeline on fixture data.",
+                  file=sys.stderr)
+            return cid, sec, wanted, 2
+    return cid, sec, wanted, None
+
+
+def _make_clients(wanted, args, session, cdp, client_id, client_secret):
+    """Build the comparator clients for ``wanted``; returns (clients, closeables)."""
+    clients, closeables = [], []
+    for name in wanted:
+        if name == "ebay":
+            from .comparators.ebay import EbayBrowseClient
+            clients.append(EbayBrowseClient(client_id, client_secret, env=args.ebay_env))
+        elif name == "google":
+            from .comparators.google_shopping import GoogleShoppingClient
+            gc = GoogleShoppingClient(headless=args.headless_compare,
+                                      min_delay=max(args.delay, 3.0))
+            clients.append(gc)
+            closeables.append(gc)
+        elif name == "amazon":
+            from .comparators.amazon import AmazonClient
+            ac = AmazonClient(cdp_url=cdp, headless=args.headless_compare,
+                              min_delay=max(args.delay, 3.0))
+            clients.append(ac)
+            closeables.append(ac)
+        else:
+            from .comparators.pricerunner import PriceRunnerClient
+            clients.append(PriceRunnerClient(session))
+    return clients, closeables
+
+
+def _hunt(args) -> int:
+    """Discover trending items from Amazon, hunt them at retail, report the profitable ones."""
+    from .browser import BrowserFetcher
+    from .discover import discover_bestsellers
+    from .http import PoliteSession
+    from .sources.base import ScrapeBlocked, SOURCES, make_scraper
+
+    comparator = "ebay" if args.comparator == "both" else args.comparator
+    wanted = [comparator]
+    client_id, client_secret, wanted, exit_code = _resolve_ebay_creds(wanted, comparator)
+    if exit_code is not None:
+        return exit_code
+
+    session = PoliteSession(min_delay=args.delay)
+    source = (args.source or ["argos"])[0]
+    fetch_mode = args.via
+    cdp = None
+    if args.via == "chrome":
+        from .chrome_launch import ensure_chrome
+        ok, msg = ensure_chrome(
+            args.cdp_url, open_url="https://www.amazon.co.uk/gp/movers-and-shakers")
+        print(f"  {msg}")
+        if not ok:
+            return 1
+        browser = BrowserFetcher(cdp_url=args.cdp_url, min_delay=args.delay)
+        fetch_mode = "browser"
+        cdp = args.cdp_url
+    elif args.show_browser:
+        browser = BrowserFetcher(headless=False, min_delay=args.delay)
+    else:
+        browser = BrowserFetcher(headless=True, min_delay=args.delay)
+
+    print("Discovering what's selling right now on Amazon …")
+    ideas = discover_bestsellers(browser, limit=args.limit)
+    if not ideas:
+        print("Couldn't read Amazon's best-seller pages (bot check or markup change).\n"
+              "Use --via chrome and browse amazon.co.uk once in that window first.",
+              file=sys.stderr)
+        return 1
+    print(f"  {len(ideas)} trending item(s) to hunt:")
+    for idea in ideas:
+        px = f" ~£{idea.amazon_price:.2f}" if idea.amazon_price else ""
+        print(f"    • {idea.term}{px}  [{idea.reason}]")
+
+    products = []
+    scraper = make_scraper(source, session, browser, fetch_mode=fetch_mode)
+    for idea in ideas:
+        try:
+            found = scraper.scrape(idea.term, max_products=args.per_item)
+            products.extend(found)
+            print(f"  {SOURCES[source].label}: '{idea.term}' -> {len(found)} product(s)")
+        except ScrapeBlocked as exc:
+            print(f"  {idea.term}: {str(exc).splitlines()[-1]}", file=sys.stderr)
+    try:  # done scraping sources; free the source browser (CDP: just our tab)
+        browser.close()
+    except Exception:  # noqa: BLE001
+        pass
+    if not products:
+        print(f"None of the trending items were found at {SOURCES[source].label}.",
+              file=sys.stderr)
+        return 1
+
+    clients, closeables = _make_clients(wanted, args, session, cdp, client_id, client_secret)
+    print(f"\nChecking {len(products)} product(s) for resale margin on {comparator} …")
+    try:
+        comparisons = compare_products(products, clients[0], min_score=args.min_score,
+                                       min_listings=args.min_listings)
+        _output(comparisons, args)
+    finally:
+        for c in closeables:
+            c.close()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="arbfinder", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -142,6 +261,31 @@ def main(argv: list[str] | None = None) -> int:
                            "visible window so its consent wall / any CAPTCHA is solvable.")
     _add_common(scan)
 
+    hunt = sub.add_parser(
+        "hunt",
+        help="Auto-discover trending items (Amazon best sellers) and check them for "
+             "retail-arbitrage profit — no search terms to type")
+    hunt.add_argument("--source", action="append", choices=list(_SRC),
+                      help="Retail site to hunt on (default: argos)")
+    hunt.add_argument("--comparator", choices=["google", "ebay", "amazon"], default="ebay",
+                      help="Resale price source to check margin against (default: ebay — "
+                           "fast API, no browser). amazon/google drive a real browser.")
+    hunt.add_argument("--limit", type=int, default=12,
+                      help="Max trending items to consider (default: 12)")
+    hunt.add_argument("--per-item", type=int, default=2,
+                      help="Max retail products to take per trending item (default: 2)")
+    hunt.add_argument("--ebay-env", choices=["PRODUCTION", "SANDBOX"], default="PRODUCTION")
+    hunt.add_argument("--delay", type=float, default=2.5,
+                      help="Minimum seconds between requests to the same host (default: 2.5)")
+    hunt.add_argument("--via", choices=["auto", "chrome", "jina", "browser"], default="chrome",
+                      help="How to fetch pages. 'chrome' (default): drive your own Chrome over "
+                           "CDP — recommended, Amazon's best-seller pages block fresh browsers.")
+    hunt.add_argument("--cdp-url", default="http://127.0.0.1:9222",
+                      help="DevTools endpoint of your Chrome for --via chrome")
+    hunt.add_argument("--show-browser", action="store_true")
+    hunt.add_argument("--headless-compare", action="store_true")
+    _add_common(hunt)
+
     demo = sub.add_parser("demo", help="Run the full pipeline on bundled fixtures (offline)")
     demo.add_argument("--comparator", choices=["both", "ebay", "pricerunner"], default="both",
                       help="Which comparator fixture(s) to run; 'both' (default) "
@@ -173,27 +317,14 @@ def main(argv: list[str] | None = None) -> int:
             _output(comparisons, args)
         return 0
 
+    if args.command == "hunt":
+        return _hunt(args)
+
     # live scan
     wanted = ["pricerunner", "ebay"] if args.comparator == "both" else [args.comparator]
-    client_id = os.environ.get("EBAY_CLIENT_ID")
-    client_secret = os.environ.get("EBAY_CLIENT_SECRET")
-    if "ebay" in wanted and (not client_id or not client_secret):
-        if args.comparator == "both":
-            print(
-                "EBAY_CLIENT_ID / EBAY_CLIENT_SECRET not set — continuing with "
-                "PriceRunner only (eBay columns will be empty).",
-                file=sys.stderr,
-            )
-            wanted.remove("ebay")
-        else:
-            print(
-                "EBAY_CLIENT_ID / EBAY_CLIENT_SECRET not set.\n"
-                "Register a (free) app at https://developer.ebay.com/my/keys and export both,\n"
-                "use --comparator pricerunner (no key needed), or run "
-                "`python -m arbfinder demo` to see the pipeline on fixture data.",
-                file=sys.stderr,
-            )
-            return 2
+    client_id, client_secret, wanted, exit_code = _resolve_ebay_creds(wanted, args.comparator)
+    if exit_code is not None:
+        return exit_code
 
     from .browser import BrowserFetcher
     from .http import PoliteSession
@@ -201,6 +332,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sources = args.source or ["argos"]
     products = []
+    session = PoliteSession(min_delay=args.delay)
 
     if args.from_file:
         # Parse a page the user saved from their own (working) browser — the
@@ -228,7 +360,6 @@ def main(argv: list[str] | None = None) -> int:
         if not args.query:
             print("Give a search term (or a URL), or use --from-file.", file=sys.stderr)
             return 2
-        session = PoliteSession(min_delay=args.delay)
         fetch_mode = args.via
         if args.via == "chrome":
             # Start (or reuse) the user's real Chrome and drive it over CDP —
@@ -262,33 +393,8 @@ def main(argv: list[str] | None = None) -> int:
             print("No products scraped from any source.", file=sys.stderr)
             return 1
 
-    clients = []
-    closeables = []  # browser-backed clients to tear down at the end
     cdp = args.cdp_url if args.via == "chrome" else None
-    for name in wanted:
-        if name == "ebay":
-            from .comparators.ebay import EbayBrowseClient
-            clients.append(EbayBrowseClient(client_id, client_secret, env=args.ebay_env))
-        elif name == "google":
-            from .comparators.google_shopping import GoogleShoppingClient
-            # Headed unless --headless-compare, so Google's consent wall / any
-            # CAPTCHA can be handled in the visible window.
-            gc = GoogleShoppingClient(
-                headless=args.headless_compare, min_delay=max(args.delay, 3.0)
-            )
-            clients.append(gc)
-            closeables.append(gc)
-        elif name == "amazon":
-            from .comparators.amazon import AmazonClient
-            # Reuse the user's Chrome over CDP when --via chrome, else own browser.
-            ac = AmazonClient(cdp_url=cdp, headless=args.headless_compare,
-                              min_delay=max(args.delay, 3.0))
-            clients.append(ac)
-            closeables.append(ac)
-        else:
-            from .comparators.pricerunner import PriceRunnerClient
-            # Shares the session so PriceRunner requests get the same politeness rules.
-            clients.append(PriceRunnerClient(session))
+    clients, closeables = _make_clients(wanted, args, session, cdp, client_id, client_secret)
     print(f"Scraped {len(products)} products total. Comparing on {', '.join(wanted)} …")
 
     try:

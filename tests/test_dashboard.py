@@ -110,6 +110,41 @@ def test_min_net_filters_out_unprofitable_rows(monkeypatch):
     assert "net ≥ £0.00" in out
 
 
+def test_hunt_mode_discovers_and_hunts(monkeypatch):
+    # Ticking "hunt trending" discovers items (stubbed), hunts them at the
+    # source (stubbed scraper), and reports — no search term needed.
+    from arbfinder import browser as browser_mod, discover as discover_mod
+    from arbfinder.discover import Idea
+    from arbfinder.models import Comparison, Product
+
+    class _FakeFetcher:
+        def __init__(self, *a, **k):
+            pass
+
+        def close(self):
+            pass
+
+    class _FakeScraper:
+        def scrape(self, term, max_products=None):
+            return [Product(name=term, price=10.0, url="u", source="argos")]
+
+    monkeypatch.setattr(browser_mod, "BrowserFetcher", _FakeFetcher)
+    monkeypatch.setattr(discover_mod, "discover_bestsellers",
+                        lambda *a, **k: [Idea(term="Ninja Air Fryer", reason="Movers")])
+    monkeypatch.setattr(dashboard, "make_scraper", lambda *a, **k: _FakeScraper())
+    comp = Comparison(product=Product(name="Ninja Air Fryer", price=10.0, url="u"),
+                      market="ebay", market_price=30.0, market_url="m",
+                      n_listings=3, matched_by="title")
+    monkeypatch.setattr(dashboard, "compare_products", lambda p, c, **k: [comp])
+    config.save_credentials("APPID", "SECRET")
+
+    out = dashboard._run_scan(
+        {"hunt": "1", "comparator": "ebay", "source": "argos",
+         "fetch_mode": "browser", "ebay_id": "", "ebay_secret": ""})
+    assert "Discovered 1 trending items" in out
+    assert "Ninja Air Fryer" in out
+
+
 def test_dashboard_offers_my_chrome_fetch_mode():
     body = dashboard._render()
     assert 'name="fetch_mode"' in body
