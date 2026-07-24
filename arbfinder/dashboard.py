@@ -16,15 +16,18 @@ uses the official API and needs no browser.
 
 from __future__ import annotations
 
+import hmac
 import html
+import json
 import logging
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
 
 try:
-    from flask import Flask, redirect, request
+    from flask import Flask, redirect, request, session
 except ImportError:  # pragma: no cover - guidance when Flask isn't installed
     raise SystemExit(
         "Flask is not installed. Run:  pip install -r requirements.txt\n"
@@ -38,10 +41,73 @@ from .sources.base import SOURCES, ScrapeBlocked, make_scraper
 
 log = logging.getLogger(__name__)
 app = Flask(__name__)
+# Signing key for the login session cookie (set a stable one in hosted deploys).
+app.secret_key = os.environ.get("ARBFINDER_SECRET_KEY") or secrets.token_hex(16)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent   # dir containing arbfinder/
 BRANCH = "claude/retail-arbitrage-finder-tjc9k2"
-RESULTS_PATH = REPO_ROOT / "results.csv"
+DATA_DIR = Path(os.environ.get("ARBFINDER_DATA_DIR", str(REPO_ROOT)))
+RESULTS_PATH = DATA_DIR / "results.csv"
+
+# Hosted mode (set on the server): bind public, require login, hide local-only
+# controls (My Chrome / eBay secret), force server-side Chromium.
+HOSTED = os.environ.get("ARBFINDER_HOSTED") == "1"
+
+
+# -- background job store (lazy so importing the module has no side effects) --
+import threading as _threading
+
+_STORE = None
+_STORE_LOCK = _threading.Lock()
+
+
+class _MemUpload:
+    """Minimal uploaded-file stand-in so a queued job can carry a saved page."""
+
+    def __init__(self, filename: str, data: bytes):
+        self.filename = filename
+        self._data = data
+
+    def read(self) -> bytes:
+        return self._data
+
+
+def _job_runner(job_id, params, progress):
+    """Runs one scan on the worker thread; returns (result_html, csv_path)."""
+    form = dict(params)
+    files = {}
+    up = form.pop("_upload_html", None)
+    if up:
+        files["page"] = _MemUpload("upload.html", up.encode("utf-8"))
+    result_html = _run_scan(form, files, progress=progress)
+    return result_html, (str(RESULTS_PATH) if RESULTS_PATH.exists() else "")
+
+
+def store():
+    global _STORE
+    with _STORE_LOCK:
+        if _STORE is None:
+            from .jobs import JobStore
+            _STORE = JobStore(DATA_DIR / "arbfinder-jobs.db")
+            _STORE.start_worker(_job_runner)
+        return _STORE
+
+
+# -- password gate (only active when ARBFINDER_PASSWORD is set) ---------------
+
+def _auth_on() -> bool:
+    return bool(os.environ.get("ARBFINDER_PASSWORD"))
+
+
+@app.before_request
+def _require_login():
+    if not _auth_on():
+        return None
+    if request.path == "/login" or request.path.startswith("/static"):
+        return None
+    if session.get("authed"):
+        return None
+    return redirect("/login")
 
 SIGNAL_FIELDS = {"movers": "sig_movers", "bestsellers": "sig_bestsellers",
                  "seasonal": "sig_seasonal", "manual": "sig_manual"}
@@ -127,6 +193,8 @@ PAGE = """<!doctype html>
  .pos {{ color: #2a2; }} .neg {{ color: #c44; }}
  .err {{ background: #c443; padding: .8rem 1rem; border-radius: 8px; }}
  a {{ color: #49f; }}
+ table {{ display: block; overflow-x: auto; }}  /* mobile: scroll wide tables */
+ {local_only_css}
 </style></head><body>
 <h1>retail-arbitrage-finder</h1>
 <p class="sub">Scrape a UK retail search page, compare prices elsewhere, surface the gaps.</p>
@@ -157,14 +225,14 @@ PAGE = """<!doctype html>
     <span style="font-weight:400;color:#888">(comma-separated, feeds “Manual”)</span>
    <input name="trend_terms" placeholder="teeth whitening strips, stanley cup" value="{trend_terms}"></label>
  </div>
- <label>Fetch via
+ <label class="local-only">Fetch via
   <select name="fetch_mode">
    <option value="chrome" {fm_chrome}>My Chrome (autonomous — recommended)</option>
    <option value="browser" {fm_browser}>Fresh browser (often blocked by Akamai)</option>
   </select></label>
- <label>My Chrome debug URL <span style="font-weight:400">(for “My Chrome”)</span>
+ <label class="local-only">My Chrome debug URL <span style="font-weight:400">(for “My Chrome”)</span>
   <input name="cdp_url" value="{cdp_url}"></label>
- <p class="note">“My Chrome” launches a real Chrome for you automatically when you
+ <p class="note local-only">“My Chrome” launches a real Chrome for you automatically when you
     scan (a dedicated window, separate from your normal browsing) and reuses it
     after that — no terminal, no file to save. Status: {chrome_status}
     · <a href="/chrome">start / re-check now</a>. If Argos shows a challenge in
@@ -202,11 +270,11 @@ PAGE = """<!doctype html>
   <input type="checkbox" name="show_all" value="1" {show_all_chk} style="width:auto">
   Show all results <span style="color:#888">— ignore the profit gates for this scan
   (inspect the full market, including losers)</span></label>
- <label>eBay Client ID <span style="font-weight:400">(App ID — only for eBay)</span>
+ <label class="local-only">eBay Client ID <span style="font-weight:400">(App ID — only for eBay)</span>
   <input name="ebay_id" autocomplete="off" value="{ebay_id}"></label>
- <label>eBay Client Secret <span style="font-weight:400">(Cert ID — stays on this machine)</span>
+ <label class="local-only">eBay Client Secret <span style="font-weight:400">(Cert ID — stays on this machine)</span>
   <input name="ebay_secret" type="password" autocomplete="off" placeholder="{secret_ph}"></label>
- <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:400">
+ <label class="wide local-only" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:400">
   <input type="checkbox" name="remember" value="1" {remember_chk} style="width:auto">
   Remember these on this machine (saved unencrypted to {config_path})</label>
  <p class="note">Runs locally on 127.0.0.1. Credentials are sent only to eBay's API.
@@ -214,7 +282,7 @@ PAGE = """<!doctype html>
  <button type="submit">Run scan</button>
 </form>
 {results}
-<p class="note" style="text-align:center;margin-top:2.5rem;border-top:1px solid #8883;padding-top:1rem">
+<p class="note local-only" style="text-align:center;margin-top:2.5rem;border-top:1px solid #8883;padding-top:1rem">
  Version <code>{version}</code> · <a href="/update">⟳ Update to latest &amp; restart</a></p>
 </body></html>"""
 
@@ -307,7 +375,8 @@ def _opportunities_table(opps) -> str:
 
 
 def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
-              signals, trend_terms, limit, min_net, min_roi, min_match) -> str:
+              signals, trend_terms, limit, min_net, min_roi, min_match,
+              progress=None) -> str:
     """Demand-guided discovery → retail search → profit-first opportunities."""
     from .browser import BrowserFetcher
     from .chrome_launch import ensure_chrome
@@ -316,6 +385,7 @@ def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
                               write_opportunities_csv)
     from .trends.engine import TrendEngine, build_providers
 
+    progress = progress or (lambda *a, **k: None)
     needs_browser = any(s in ("movers", "bestsellers") for s in signals)
     session = PoliteSession()
     if fetch_mode == "chrome":
@@ -332,10 +402,13 @@ def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
     engine = TrendEngine(providers)
     targets, opportunities, seen = [], [], set()
     try:
+        progress("discovering", f"reading signals: {', '.join(signals)}")
         targets = engine.discover(session=session, browser=fetcher, limit=limit)
         if targets:
             scraper = make_scraper(source, session, fetcher, fetch_mode=sc_mode)
-            for t in targets:
+            for i, t in enumerate(targets, 1):
+                progress("searching_retailer",
+                         f"{SOURCES[source].label}: {t.term} ({i}/{len(targets)})")
                 try:
                     prods = scraper.scrape(t.term, max_products=3)
                 except ScrapeBlocked:
@@ -344,10 +417,12 @@ def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
                 seen.update(p.url for p in prods)
                 if not prods:
                     continue
+                progress("collecting_prices", f"pricing {len(prods)} × {t.term}")
                 for c in compare_products(prods, client):
                     o = build_opportunity(c, fees, postage, t.trend_strength, t.seasonal_strength)
                     if o is not None:
                         opportunities.append(o)
+        progress("calculating", "ranking opportunities by net profit & ROI")
     finally:
         if fetcher is not None:
             try:
@@ -374,13 +449,16 @@ def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
             + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
 
 
-def _run_scan(form, files=None) -> str:
+def _run_scan(form, files=None, progress=None) -> str:
     files = files or {}
+    progress = progress or (lambda *a, **k: None)
     query = form.get("url", "").strip()
     comparator = form.get("comparator", "ebay")
     source = form.get("source") if form.get("source") in SOURCES else "argos"
     fetch_mode = form.get("fetch_mode") or "chrome"
     cdp_url = form.get("cdp_url", "").strip() or "http://127.0.0.1:9222"
+    if HOSTED:  # server can't reach your Mac's Chrome — use in-container Chromium
+        fetch_mode = "browser"
     hunt = bool(form.get("hunt"))
     try:
         max_products = int(form.get("max_products") or 10)
@@ -445,7 +523,7 @@ def _run_scan(form, files=None) -> str:
         if hunt:
             return _run_hunt(client, comparator, source, fetch_mode, cdp_url,
                              fees, postage, signals, trend_terms, max_products,
-                             min_net, min_roi, min_match)
+                             min_net, min_roi, min_match, progress)
         if upload_html:
             products = SOURCES[source].parse(upload_html)
             for p in products:
@@ -579,6 +657,7 @@ def _render(results: str = "", form=None) -> str:
         config_path=html.escape(str(config.CONFIG_PATH)),
         saved_note=saved_note,
         version=html.escape(_version()),
+        local_only_css=(".local-only{display:none !important}" if HOSTED else ""),
         g_sel="selected" if comparator == "google" else "",
         e_sel="selected" if comparator == "ebay" else "",
         a_sel="selected" if comparator == "amazon" else "",
@@ -588,14 +667,130 @@ def _render(results: str = "", form=None) -> str:
     )
 
 
+def _progress_html(job_id: str, job: dict) -> str:
+    from .jobs import STAGES
+    dots = "".join(f'<li id="st-{s}">{s.replace("_", " ")}</li>' for s in STAGES)
+    detail = html.escape(job.get("detail") or "starting…")
+    return f"""
+<div class="err" style="background:rgba(127,127,127,.12)">
+ <p style="margin:.2rem 0"><b>Scan running…</b> <span id="detail">{detail}</span></p>
+ <ol id="pipeline">{dots}</ol>
+ <p class="note">This updates itself. You can close it and reopen on another
+    device — the result is saved.</p>
+</div>
+<style>
+ #pipeline li{{opacity:.4;margin:.15rem 0}}
+ #pipeline li.active{{opacity:1;font-weight:700}}
+ #pipeline li.done{{opacity:.65;text-decoration:line-through}}
+</style>
+<script>
+const STAGES={json.dumps(STAGES)};
+async function poll(){{
+  try{{
+    const j=await (await fetch("/jobs/{job_id}/status")).json();
+    document.getElementById("detail").textContent=j.detail||j.status;
+    let seen=false;
+    for(const s of STAGES){{
+      const el=document.getElementById("st-"+s); if(!el)continue;
+      if(s===j.stage){{el.className="active";seen=true;}}
+      else el.className=seen?"":"done";
+    }}
+    if(j.status==="done"){{location.reload();return;}}
+    if(j.status==="error"){{document.getElementById("detail").textContent="Error: "+j.error;return;}}
+  }}catch(e){{}}
+  setTimeout(poll,2000);
+}}
+poll();
+</script>"""
+
+
+def _form_from(job: dict):
+    try:
+        return json.loads(job.get("params") or "{}")
+    except (ValueError, TypeError):
+        return {}
+
+
 @app.route("/")
 def index() -> str:
-    return _render()
+    latest = store().latest(status="done")
+    results = ""
+    if latest and latest.get("result_html"):
+        results = (f'<p class="note">Showing your latest run · '
+                   f'<a href="/jobs/{latest["id"]}">permalink</a></p>'
+                   + latest["result_html"])
+    return _render(results=results)
 
 
 @app.route("/scan", methods=["POST"])
-def scan() -> str:
-    return _render(results=_run_scan(request.form, request.files), form=request.form)
+def scan():
+    params = {k: request.form.get(k) for k in request.form.keys()}
+    up = request.files.get("page")
+    if up is not None and getattr(up, "filename", ""):
+        try:
+            params["_upload_html"] = up.read().decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+    job_id = store().enqueue(params)
+    return redirect(f"/jobs/{job_id}")
+
+
+@app.route("/jobs/<job_id>")
+def job_view(job_id):
+    job = store().get(job_id)
+    if not job:
+        return _render(results='<p class="err">No such scan.</p>')
+    form = _form_from(job)
+    if job["status"] == "done":
+        return _render(results=(job["result_html"] or ""), form=form)
+    if job["status"] == "error":
+        return _render(results=f'<p class="err">Scan failed: {html.escape(job["error"] or "")}</p>',
+                       form=form)
+    return _render(results=_progress_html(job_id, job), form=form)
+
+
+@app.route("/jobs/<job_id>/status")
+def job_status(job_id):
+    from flask import jsonify
+    job = store().get(job_id)
+    if not job:
+        return jsonify({"error": "no such job"}), 404
+    return jsonify({"status": job["status"], "stage": job["stage"],
+                    "detail": job["detail"] or "", "error": job["error"] or ""})
+
+
+def _login_page(error: str = "") -> str:
+    err = f'<p style="background:#c443;padding:.6rem;border-radius:6px">{html.escape(error)}</p>' if error else ""
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — retail-arbitrage-finder</title>
+<style>:root{{color-scheme:light dark}} body{{font-family:system-ui,sans-serif;
+max-width:340px;margin:15vh auto;padding:0 1rem}} input,button{{width:100%;
+font-size:1rem;padding:.6rem;margin-top:.6rem;box-sizing:border-box;border-radius:6px;
+border:1px solid #8888}} button{{background:#2d7;color:#062;font-weight:700;border:0}}
+</style></head><body><h2>retail-arbitrage-finder</h2>{err}
+<form method="post" action="/login">
+ <input type="password" name="password" placeholder="Password" autofocus>
+ <button type="submit">Sign in</button></form></body></html>"""
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not _auth_on():
+        return redirect("/")
+    if request.method == "POST":
+        given = request.form.get("password", "")
+        if hmac.compare_digest(given, os.environ.get("ARBFINDER_PASSWORD", "")):
+            session["authed"] = True
+            return redirect("/")
+        return _login_page("Wrong password — try again.")
+    return _login_page()
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
 
 
 @app.route("/chrome")
@@ -656,25 +851,30 @@ def _free_port(start: int, tries: int = 20) -> int:
 
 
 def main() -> None:
-    import os
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    store()  # start the background scan worker (Playwright runs on that thread)
+
+    if HOSTED:  # public bind, fixed port, no browser auto-open
+        port = int(os.environ.get("PORT") or os.environ.get("ARBFINDER_PORT", "8080"))
+        gate = "password-gated" if _auth_on() else "OPEN (set ARBFINDER_PASSWORD!)"
+        print(f"retail-arbitrage-finder (hosted, {gate}) → 0.0.0.0:{port}")
+        app.run(host="0.0.0.0", port=port, threaded=True)  # threaded: scans run off-request
+        return
+
     requested = int(os.environ.get("ARBFINDER_PORT", "5000"))
     port = _free_port(requested)
-    # Pin the chosen port so an in-app "Update & restart" re-binds the same URL.
-    os.environ["ARBFINDER_PORT"] = str(port)
+    os.environ["ARBFINDER_PORT"] = str(port)  # pin so "Update & restart" keeps the URL
     url = f"http://127.0.0.1:{port}"
     if port != requested:
         print(f"Port {requested} was busy (often macOS AirPlay Receiver, which makes the "
               f"browser DOWNLOAD the page instead of showing it) — using {port} instead.")
     print(f"retail-arbitrage-finder dashboard → {url}  (Ctrl+C to stop)")
-    # Open the right URL automatically so there's no chance of hitting AirPlay
-    # on :5000 by mistake. Unless disabled, and best-effort only.
     if os.environ.get("ARBFINDER_NO_BROWSER") != "1":
         import threading
         import webbrowser
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    # threaded=False so Playwright's sync API stays on one thread.
-    app.run(host="127.0.0.1", port=port, threaded=False)
+    # threaded: the scan runs on the worker thread, so requests stay quick.
+    app.run(host="127.0.0.1", port=port, threaded=True)
 
 
 if __name__ == "__main__":

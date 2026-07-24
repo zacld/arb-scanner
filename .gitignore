@@ -9,3 +9,11 @@ probe_page.html
 .pytest_cache/
 .arbfinder-profile-*/
 debug_jina_page.html
+
+# runtime data
+results.csv
+*.db
+arbfinder-jobs.db
+debug_*.html
+.venv/
+__pycache__/

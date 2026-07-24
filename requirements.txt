@@ -12,3 +12,6 @@ flask>=3.0
 
 # dev
 pytest>=8.0
+
+# Hosted deployment (WSGI server)
+gunicorn>=21.0

@@ -1,0 +1,27 @@
+# Fly.io config. Rename `app` to your own unique name before first deploy
+# (or let `fly launch` set it). See docs/deploy.md for the full walkthrough.
+app = "arbfinder-CHANGEME"
+primary_region = "lhr"   # London — close to the UK retail/eBay endpoints
+
+[build]
+
+[env]
+  ARBFINDER_HOSTED = "1"
+  ARBFINDER_DATA_DIR = "/data"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  auto_stop_machines = false      # stay up so the worker + saved results persist
+  min_machines_running = 1
+
+# Persistent disk for SQLite jobs DB + latest results.csv.
+[mounts]
+  source = "arbfinder_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "2gb"                   # Chromium is memory-hungry; 2gb avoids OOM

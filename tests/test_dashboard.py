@@ -14,6 +14,12 @@ def isolate_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "creds.json")
     monkeypatch.delenv("EBAY_CLIENT_ID", raising=False)
     monkeypatch.delenv("EBAY_CLIENT_SECRET", raising=False)
+    # Isolate the job store / results / hosted flags per test.
+    monkeypatch.setattr(dashboard, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(dashboard, "RESULTS_PATH", tmp_path / "results.csv")
+    monkeypatch.setattr(dashboard, "_STORE", None)
+    monkeypatch.setattr(dashboard, "HOSTED", False)
+    monkeypatch.delenv("ARBFINDER_PASSWORD", raising=False)
 
 
 @pytest.fixture

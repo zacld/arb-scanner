@@ -1,0 +1,11 @@
+.git
+.venv
+__pycache__
+*.pyc
+tests
+*.db
+arbfinder-jobs.db
+results.csv
+debug_*.html
+.claude
+scripts/*.command
