@@ -73,10 +73,11 @@ PAGE = """<!doctype html>
   </select></label>
  <label>My Chrome debug URL <span style="font-weight:400">(for “My Chrome”)</span>
   <input name="cdp_url" value="{cdp_url}"></label>
- <p class="note">“My Chrome”: launch Chrome with the debug port once
-    (double-click <code>scripts/chrome-debug.command</code>, or run it), browse the
-    retailer in that window so it clears the bot check, then scan — the tool reuses
-    that cleared session. No file to save.</p>
+ <p class="note">“My Chrome” launches a real Chrome for you automatically when you
+    scan (a dedicated window, separate from your normal browsing) and reuses it
+    after that — no terminal, no file to save. Status: {chrome_status}
+    · <a href="/chrome">start / re-check now</a>. If Argos shows a challenge in
+    that window the first time, solve it once and scan again.</p>
  <label class="wide">… or upload a saved search page (HTML) instead
   <span style="font-weight:400">— always-works fallback: open a retailer's results page,
    save it (Chrome: Cmd+S → "Webpage, HTML Only" · Safari: "Page Source"), choose it here.</span>
@@ -223,11 +224,18 @@ def _run_scan(form, files=None) -> str:
             from .browser import BrowserFetcher
             from .http import PoliteSession
             if fetch_mode == "chrome":
-                # Drive the user's own already-cleared Chrome over CDP — the
-                # autonomous route past Akamai. Force the browser fetch path.
+                # Drive the user's own Chrome over CDP — the autonomous route
+                # past Akamai. Start (or reuse) it for them so there's no
+                # terminal step: open the retailer page first to warm the
+                # bot-protection clearance, then force the browser fetch path.
+                from .chrome_launch import ensure_chrome
+                from .sources.base import resolve_target
+                ok, chrome_msg = ensure_chrome(cdp_url, open_url=resolve_target(source, query))
+                if not ok:
+                    return f'<p class="err">{html.escape(chrome_msg)}</p>'
                 fetcher = BrowserFetcher(cdp_url=cdp_url)
                 scraper = make_scraper(source, PoliteSession(), fetcher, fetch_mode="browser")
-                via = "your Chrome"
+                via = f"your Chrome ({chrome_msg.rstrip('.').lower()})"
             else:
                 fetcher = BrowserFetcher(headless=False)
                 scraper = make_scraper(source, PoliteSession(), fetcher)
@@ -290,6 +298,10 @@ def _render(results: str = "", form=None) -> str:
     comparator = form.get("comparator", "ebay")
     env = form.get("ebay_env", "PRODUCTION")
     fetch_mode = form.get("fetch_mode", "chrome")
+    cdp_url = form.get("cdp_url") or "http://127.0.0.1:9222"
+    from .chrome_launch import is_running
+    chrome_status = ("<b style='color:#2a2'>running</b>" if is_running(cdp_url, timeout=0.5)
+                     else "<b style='color:#c44'>not started</b> (starts on scan)")
     saved = config.load_credentials()
     have_secret = bool(saved["ebay_client_secret"]) or bool(form.get("ebay_secret"))
     saved_note = (
@@ -304,7 +316,8 @@ def _render(results: str = "", form=None) -> str:
         fees=html.escape(str(form.get("fees", "13"))),
         postage=html.escape(str(form.get("postage", "0"))),
         min_net=html.escape(str(form.get("min_net", ""))),
-        cdp_url=html.escape(form.get("cdp_url") or "http://127.0.0.1:9222"),
+        cdp_url=html.escape(cdp_url),
+        chrome_status=chrome_status,
         fm_chrome="selected" if fetch_mode != "browser" else "",
         fm_browser="selected" if fetch_mode == "browser" else "",
         # Pre-fill the Client ID from saved/env; never pre-fill the secret field.
@@ -329,6 +342,14 @@ def index() -> str:
 @app.route("/scan", methods=["POST"])
 def scan() -> str:
     return _render(results=_run_scan(request.form, request.files), form=request.form)
+
+
+@app.route("/chrome")
+def chrome():
+    from .chrome_launch import ensure_chrome
+    ok, msg = ensure_chrome("http://127.0.0.1:9222")
+    cls = "note" if ok else "err"
+    return _render(results=f'<p class="{cls}">{html.escape(msg)}</p>')
 
 
 @app.route("/forget")

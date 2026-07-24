@@ -228,7 +228,16 @@ def main(argv: list[str] | None = None) -> int:
         session = PoliteSession(min_delay=args.delay)
         fetch_mode = args.via
         if args.via == "chrome":
-            # Connect to the user's already-running, already-cleared Chrome.
+            # Start (or reuse) the user's real Chrome and drive it over CDP —
+            # no manual terminal launch needed. Warm the first source's search
+            # page so a first-ever run clears the bot check.
+            from .chrome_launch import ensure_chrome
+            from .sources.base import resolve_target
+            warm = resolve_target(sources[0], args.query) if args.query else None
+            ok, msg = ensure_chrome(args.cdp_url, open_url=warm)
+            print(f"  {msg}")
+            if not ok:
+                return 1
             browser = BrowserFetcher(cdp_url=args.cdp_url, min_delay=args.delay)
             fetch_mode = "browser"  # force the browser path; it's the CDP one
         elif args.show_browser:

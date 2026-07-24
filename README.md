@@ -43,14 +43,16 @@ python -m arbfinder.dashboard
 ```
 
 **Type a search term and scan live** — set **Fetch via → "My Chrome"** and the
-dashboard drives your own already-open Chrome (see *Autonomous scraping* below:
-launch it once with the debug port and browse the retailer so it clears the bot
-check). No file to save. Pick the **retailer** and **comparator** from the
-dropdowns, choose **eBay Production/Sandbox**, and — for eBay — type your Client
-ID / Secret. Set **Min net £** to hide rows that don't clear a real profit after
-fees + postage (blank = show all, `0` = anything profitable). A saved-page
-**upload** is still there as an always-works fallback. It **binds to 127.0.0.1
-only** and credentials are sent only to eBay's own API.
+dashboard **launches a real Chrome for you** (a dedicated window, separate from
+your normal browsing) the first time you scan, then reuses it. No terminal, no
+file to save — it's fully point-and-click. (First run on a site, Akamai may show
+a one-off challenge in that window; solve it once and scan again.) Pick the
+**retailer** and **comparator** from the dropdowns, choose **eBay
+Production/Sandbox**, and — for eBay — type your Client ID / Secret. Set **Min net
+£** to hide rows that don't clear a real profit after fees + postage (blank =
+show all, `0` = anything profitable). A saved-page **upload** is still there as an
+always-works fallback. It **binds to 127.0.0.1 only** and credentials are sent
+only to eBay's own API.
 
 Tick **Remember these on this machine** to save the credentials (so you don't
 retype them): they're written to `~/.arbfinder-credentials.json`, locked to
@@ -97,26 +99,23 @@ python -m arbfinder scan --from-file argos.html --source argos --comparator goog
 ### Autonomous scraping via your own Chrome (`--via chrome`)
 
 To scrape without saving pages by hand, drive the browser that already gets
-through — **your real Chrome**:
+through — **your real Chrome**. `--via chrome` now **starts that Chrome for you**
+(dedicated debugging profile, warmed on the search page) and drives it over CDP:
 
-1. Launch Chrome with a debugging port (double-click `scripts/chrome-debug.command`
-   on macOS, or run it):
-   ```bash
-   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-     --remote-debugging-port=9222 --user-data-dir="$HOME/.arbfinder-chrome-debug"
-   ```
-2. In *that* Chrome window, browse the retailer once (e.g. open
-   `https://www.argos.co.uk/search/air-fryer/`) so it clears the bot check.
-3. Leave it open and scan — the tool drives that session, no file needed, and
-   can hit many searches in one go:
-   ```bash
-   python -m arbfinder scan "air fryer" --source argos --comparator ebay --via chrome
-   ```
+```bash
+python -m arbfinder scan "air fryer" --source argos --comparator ebay --via chrome
+```
 
-It works because the tool reuses your genuine, already-cleared Chrome session
-(real fingerprint + Akamai clearance cookie) rather than a detectable fresh
-browser. If the site starts blocking again, just re-load a page in that Chrome
-window to refresh the clearance.
+That's it — no separate launch step. It works because the tool uses your genuine
+Chrome (real fingerprint + a persistent profile that keeps its Akamai clearance
+cookie) rather than a detectable fresh browser, and it can hit many searches in
+one go. If a first-ever run shows a challenge, solve it once in the window that
+opens and re-run; the clearance then sticks.
+
+Prefer to manage the window yourself? Launch it with `scripts/chrome-debug.command`
+(or point `--cdp-url` at any Chrome you started with `--remote-debugging-port`)
+and the tool will reuse it. Set `ARBFINDER_CHROME` if Chrome isn't in the default
+install location.
 
 Other fetch modes: `--via jina` routes through
 [Jina Reader](https://jina.ai/reader) with a free `JINA_API_KEY`;
