@@ -202,6 +202,7 @@ def _hunt(args) -> int:
     clients, closeables = _make_clients(wanted, args, session, cdp, client_id, client_secret)
     client = clients[0]
     opportunities = []
+    seen_urls: set[str] = set()  # a product found under several categories is scored once
     print(f"\nSearching {SOURCES[source].label} and validating resale on {comparator} …")
     try:
         scraper = make_scraper(source, session, browser, fetch_mode=fetch_mode)
@@ -211,6 +212,10 @@ def _hunt(args) -> int:
             except ScrapeBlocked as exc:
                 print(f"  {t.term}: {str(exc).splitlines()[-1]}", file=sys.stderr)
                 continue
+            # Dedupe across categories (discovery order wins) — also saves
+            # redundant marketplace lookups for the same product.
+            products = [p for p in products if p.url not in seen_urls]
+            seen_urls.update(p.url for p in products)
             if not products:
                 continue
             comps = compare_products(products, client, min_score=args.min_score,
