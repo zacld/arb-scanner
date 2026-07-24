@@ -18,6 +18,10 @@ from __future__ import annotations
 
 import html
 import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 try:
     from flask import Flask, redirect, request
@@ -34,6 +38,33 @@ from .sources.base import SOURCES, ScrapeBlocked, make_scraper
 
 log = logging.getLogger(__name__)
 app = Flask(__name__)
+
+REPO_ROOT = Path(__file__).resolve().parent.parent   # dir containing arbfinder/
+BRANCH = "claude/retail-arbitrage-finder-tjc9k2"
+
+
+def _git(gitargs, timeout: float = 90):
+    """Run git in the repo; return (returncode, combined output)."""
+    try:
+        r = subprocess.run(["git", *gitargs], cwd=REPO_ROOT, capture_output=True,
+                           text=True, timeout=timeout)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except Exception as exc:  # noqa: BLE001 - git missing / not a repo / timeout
+        return 1, str(exc)
+
+
+def _version() -> str:
+    code, out = _git(["log", "-1", "--format=%h %s"])
+    return out[:64] if code == 0 and out else "unknown"
+
+
+def _restart() -> None:
+    """Replace this process with a fresh one so pulled code takes effect."""
+    try:
+        os.chdir(REPO_ROOT)
+        os.execv(sys.executable, [sys.executable, "-m", "arbfinder.dashboard"])
+    except Exception:  # noqa: BLE001
+        os._exit(1)
 
 PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -119,6 +150,8 @@ PAGE = """<!doctype html>
  <button type="submit">Run scan</button>
 </form>
 {results}
+<p class="note" style="text-align:center;margin-top:2.5rem;border-top:1px solid #8883;padding-top:1rem">
+ Version <code>{version}</code> · <a href="/update">⟳ Update to latest &amp; restart</a></p>
 </body></html>"""
 
 
@@ -382,6 +415,7 @@ def _render(results: str = "", form=None) -> str:
         remember_chk="checked" if (form.get("remember") or config.has_saved_secret()) else "",
         config_path=html.escape(str(config.CONFIG_PATH)),
         saved_note=saved_note,
+        version=html.escape(_version()),
         g_sel="selected" if comparator == "google" else "",
         e_sel="selected" if comparator == "ebay" else "",
         a_sel="selected" if comparator == "amazon" else "",
@@ -407,6 +441,25 @@ def chrome():
     ok, msg = ensure_chrome("http://127.0.0.1:9222")
     cls = "note" if ok else "err"
     return _render(results=f'<p class="{cls}">{html.escape(msg)}</p>')
+
+
+@app.route("/update")
+def update():
+    code, out = _git(["pull", "origin", BRANCH])
+    already = code == 0 and ("up to date" in out.lower() or "up-to-date" in out.lower())
+    if code != 0:
+        body = ('<p class="err">Update failed — pull it manually if this persists.'
+                f'<br><pre style="white-space:pre-wrap">{html.escape(out)}</pre></p>')
+    elif already:
+        body = ('<p class="note">You\'re already on the latest version.'
+                f'<br><pre style="white-space:pre-wrap">{html.escape(out)}</pre></p>')
+    else:
+        import threading
+        threading.Timer(1.5, _restart).start()
+        body = ('<p class="note"><b>Updated!</b> Restarting to apply the new code…'
+                f'<br><pre style="white-space:pre-wrap">{html.escape(out)}</pre>'
+                'Wait ~5 seconds, then <a href="/">refresh this page</a>.</p>')
+    return _render(results=body)
 
 
 @app.route("/forget")
@@ -436,6 +489,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     requested = int(os.environ.get("ARBFINDER_PORT", "5000"))
     port = _free_port(requested)
+    # Pin the chosen port so an in-app "Update & restart" re-binds the same URL.
+    os.environ["ARBFINDER_PORT"] = str(port)
     url = f"http://127.0.0.1:{port}"
     if port != requested:
         print(f"Port {requested} was busy (often macOS AirPlay Receiver, which makes the "
