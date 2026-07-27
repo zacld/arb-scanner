@@ -68,3 +68,36 @@ def test_hosted_mode_hides_local_only_controls(monkeypatch):
     monkeypatch.setattr(dashboard, "HOSTED", True)
     body = dashboard._render()
     assert ".local-only{display:none" in body  # secret / My-Chrome fields hidden
+
+
+# -- Mac-agent broker flow ---------------------------------------------------
+
+def test_agent_endpoints_require_token(client, monkeypatch):
+    monkeypatch.setenv("ARBFINDER_AGENT_TOKEN", "sekret")
+    assert client.get("/agent/next").status_code == 403                       # no token
+    r = client.get("/agent/next", headers={"X-Agent-Token": "sekret"})
+    assert r.status_code == 204                                                # authed, nothing queued
+
+
+def test_broker_mode_agent_runs_job_and_persists(client, monkeypatch):
+    # Hosted broker: the server does NOT run the scan; a queued job waits for the
+    # agent, which claims it and posts the result back.
+    monkeypatch.setattr(dashboard, "HOSTED", True)
+    monkeypatch.setenv("ARBFINDER_AGENT_TOKEN", "sekret")
+
+    job_id = client.post("/scan", data={"hunt": "1", "comparator": "ebay"}) \
+        .headers["Location"].rsplit("/", 1)[-1]
+    time.sleep(0.1)
+    assert client.get(f"/jobs/{job_id}/status").get_json()["status"] == "queued"  # nobody ran it
+
+    hdr = {"X-Agent-Token": "sekret"}
+    claimed = client.get("/agent/next", headers=hdr).get_json()
+    assert claimed["job_id"] == job_id
+    client.post(f"/agent/progress/{job_id}", headers=hdr,
+                json={"stage": "calculating", "detail": "x"})
+    client.post(f"/agent/result/{job_id}", headers=hdr,
+                json={"status": "done", "result_html": "<b>AGENT RESULT</b>"})
+
+    assert client.get(f"/jobs/{job_id}/status").get_json()["status"] == "done"
+    assert "AGENT RESULT" in client.get("/").get_data(as_text=True)
+    assert "🟢 Mac agent connected" in client.get("/").get_data(as_text=True)

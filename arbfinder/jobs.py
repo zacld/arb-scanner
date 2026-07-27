@@ -25,6 +25,10 @@ log = logging.getLogger(__name__)
 STAGES = ["discovering", "searching_retailer", "collecting_prices",
           "matching", "calculating"]
 
+# A job claimed by an agent but not updated within this window is re-queued
+# (agent crashed / Mac slept), so it isn't stuck forever.
+STALE_CLAIM_SECS = 600.0
+
 
 class JobStore:
     """SQLite-backed job queue + status store. One worker, one scan at a time."""
@@ -36,6 +40,7 @@ class JobStore:
         self._q: queue.Queue[str] = queue.Queue()
         self._runner = None
         self._worker: threading.Thread | None = None
+        self.agent_last_seen: float | None = None  # broker mode: last /agent/next poll
         self._init_db()
 
     def _conn(self) -> sqlite3.Connection:
@@ -47,13 +52,19 @@ class JobStore:
         return conn
 
     def _init_db(self) -> None:
-        self._conn().executescript(
+        conn = self._conn()
+        conn.executescript(
             """CREATE TABLE IF NOT EXISTS jobs(
                  id TEXT PRIMARY KEY, status TEXT, stage TEXT, detail TEXT,
                  error TEXT, params TEXT, result_html TEXT, csv_path TEXT,
                  created_at REAL, updated_at REAL);"""
         )
-        self._conn().commit()
+        # Migration for the Mac-agent hybrid (safe on an existing volume DB).
+        try:
+            conn.execute("ALTER TABLE jobs ADD COLUMN claimed_at REAL")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+        conn.commit()
 
     # -- worker -------------------------------------------------------------
 
@@ -95,8 +106,42 @@ class JobStore:
             (job_id, "queued", "queued", "", None, json.dumps(params), None, None, now, now),
         )
         self._conn().commit()
-        self._q.put(job_id)
+        if self._worker is not None:  # local mode: hand to the in-process worker
+            self._q.put(job_id)       # broker mode: the Mac agent claims it via HTTP
         return job_id
+
+    # -- Mac-agent broker API ----------------------------------------------
+
+    def mark_agent_seen(self) -> None:
+        self.agent_last_seen = time.time()
+
+    def claim_next(self) -> dict | None:
+        """Atomically claim the oldest queued job for a remote agent.
+
+        Re-queues stale claims first, then claims one job. Returns
+        {job_id, params} or None if nothing is waiting.
+        """
+        conn = self._conn()
+        now = time.time()
+        conn.execute(
+            "UPDATE jobs SET status='queued' WHERE status='claimed' AND ?-updated_at > ?",
+            (now, STALE_CLAIM_SECS),
+        )
+        row = conn.execute(
+            "SELECT id, params FROM jobs WHERE status='queued' ORDER BY created_at LIMIT 1"
+        ).fetchone()
+        if row is None:
+            conn.commit()
+            return None
+        cur = conn.execute(
+            "UPDATE jobs SET status='claimed', claimed_at=?, updated_at=? "
+            "WHERE id=? AND status='queued'",
+            (now, now, row["id"]),
+        )
+        conn.commit()
+        if cur.rowcount != 1:  # someone else won the race
+            return None
+        return {"job_id": row["id"], "params": json.loads(row["params"])}
 
     def update(self, job_id: str, **fields) -> None:
         fields["updated_at"] = time.time()

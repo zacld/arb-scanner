@@ -24,10 +24,11 @@ import os
 import secrets
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 try:
-    from flask import Flask, redirect, request, session
+    from flask import Flask, jsonify, redirect, request, session
 except ImportError:  # pragma: no cover - guidance when Flask isn't installed
     raise SystemExit(
         "Flask is not installed. Run:  pip install -r requirements.txt\n"
@@ -72,8 +73,12 @@ class _MemUpload:
         return self._data
 
 
-def _job_runner(job_id, params, progress):
-    """Runs one scan on the worker thread; returns (result_html, csv_path)."""
+def run_job_local(params, progress):
+    """Run one scan in-process (local Chrome + eBay) → (result_html, csv_path).
+
+    Used by both the local in-process worker and the Mac agent (which imports
+    this to run hosted-site jobs on the Mac's residential IP).
+    """
     form = dict(params)
     files = {}
     up = form.pop("_upload_html", None)
@@ -83,13 +88,20 @@ def _job_runner(job_id, params, progress):
     return result_html, (str(RESULTS_PATH) if RESULTS_PATH.exists() else "")
 
 
+def _job_runner(job_id, params, progress):
+    return run_job_local(params, progress)
+
+
 def store():
     global _STORE
     with _STORE_LOCK:
         if _STORE is None:
             from .jobs import JobStore
             _STORE = JobStore(DATA_DIR / "arbfinder-jobs.db")
-            _STORE.start_worker(_job_runner)
+            # Local mode runs jobs in-process. Hosted (broker) mode leaves them
+            # queued for the Mac agent — the server can't scrape retail sites.
+            if not HOSTED:
+                _STORE.start_worker(_job_runner)
         return _STORE
 
 
@@ -103,11 +115,57 @@ def _auth_on() -> bool:
 def _require_login():
     if not _auth_on():
         return None
-    if request.path == "/login" or request.path.startswith("/static"):
+    # /agent/* has its own token auth; /login and static are always open.
+    if (request.path == "/login" or request.path.startswith("/static")
+            or request.path.startswith("/agent/")):
         return None
     if session.get("authed"):
         return None
     return redirect("/login")
+
+
+# -- Mac-agent broker API (token-gated, separate from the login) --------------
+
+def _agent_ok() -> bool:
+    token = os.environ.get("ARBFINDER_AGENT_TOKEN")
+    if not token:
+        return False
+    return hmac.compare_digest(request.headers.get("X-Agent-Token", ""), token)
+
+
+@app.route("/agent/next")
+def agent_next():
+    if not _agent_ok():
+        return ("forbidden", 403)
+    st = store()
+    st.mark_agent_seen()
+    job = st.claim_next()
+    if not job:
+        return ("", 204)
+    return jsonify(job)
+
+
+@app.route("/agent/progress/<job_id>", methods=["POST"])
+def agent_progress(job_id):
+    if not _agent_ok():
+        return ("forbidden", 403)
+    data = request.get_json(silent=True) or {}
+    store().update(job_id, status="running", stage=data.get("stage", ""),
+                   detail=data.get("detail", ""))
+    return ("", 204)
+
+
+@app.route("/agent/result/<job_id>", methods=["POST"])
+def agent_result(job_id):
+    if not _agent_ok():
+        return ("forbidden", 403)
+    data = request.get_json(silent=True) or {}
+    if data.get("status") == "error":
+        store().update(job_id, status="error", error=data.get("error", ""))
+    else:
+        store().update(job_id, status="done", stage="done", detail="",
+                       result_html=data.get("result_html", ""), csv_path="")
+    return ("", 204)
 
 SIGNAL_FIELDS = {"movers": "sig_movers", "bestsellers": "sig_bestsellers",
                  "seasonal": "sig_seasonal", "manual": "sig_manual"}
@@ -198,6 +256,7 @@ PAGE = """<!doctype html>
 </style></head><body>
 <h1>retail-arbitrage-finder</h1>
 <p class="sub">Scrape a UK retail search page, compare prices elsewhere, surface the gaps.</p>
+{agent_status}
 <form method="post" action="/scan" enctype="multipart/form-data">
  <label class="wide">① Search term — type a product and scan it live
   <input name="url" placeholder="air fryer" value="{url}"></label>
@@ -623,6 +682,17 @@ def _render(results: str = "", form=None) -> str:
     from .chrome_launch import is_running
     chrome_status = ("<b style='color:#2a2'>running</b>" if is_running(cdp_url, timeout=0.5)
                      else "<b style='color:#c44'>not started</b> (starts on scan)")
+    agent_status = ""
+    if HOSTED:
+        seen = store().agent_last_seen
+        if seen is not None and (time.time() - seen) < 30:
+            agent_status = ('<p class="note">🟢 Mac agent connected — scans run on your '
+                            'Mac. Keep it awake with the agent running.</p>')
+        else:
+            when = f"last seen {int(time.time() - seen)}s ago" if seen else "not seen yet"
+            agent_status = ('<p class="err">🔴 No Mac agent connected (' + when + '). Run '
+                            '<code>scripts/agent.command</code> on your Mac — scans queue '
+                            "until it's up.</p>")
     saved = config.load_credentials()
     have_secret = bool(saved["ebay_client_secret"]) or bool(form.get("ebay_secret"))
     saved_note = (
@@ -657,6 +727,7 @@ def _render(results: str = "", form=None) -> str:
         config_path=html.escape(str(config.CONFIG_PATH)),
         saved_note=saved_note,
         version=html.escape(_version()),
+        agent_status=agent_status,
         local_only_css=(".local-only{display:none !important}" if HOSTED else ""),
         g_sel="selected" if comparator == "google" else "",
         e_sel="selected" if comparator == "ebay" else "",

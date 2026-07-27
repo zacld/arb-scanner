@@ -72,10 +72,20 @@ stage pipeline → results persist and reappear on refresh or another device.
 `127.0.0.1`, opens your browser, and offers **My Chrome** (`--via chrome`) — the
 reliable scraping path when you're at your Mac.
 
-## Later: reliable cloud retailer scraping
+## Reliable retail scraping: the Mac-agent hybrid (recommended, free)
 
-The retailer fetch is designed to be swapped for a bot-bypass/residential service
-(ScraperAPI, Zyte, Bright Data Web Unlocker, Browserless-residential) without
-touching scan logic — see `docs/sold-price-layer.md`-style provider seam noted in
-the plan. That's the paid upgrade that makes Argos/Amazon scraping reliable from
-the cloud.
+Argos/Amazon block the data-centre IP, so live retail scraping fails from the
+cloud. The free fix is the **Mac agent**: your phone triggers scans on the hosted
+site, and a small worker on your Mac (residential IP + real Chrome) runs them and
+posts results back. Set one extra secret:
+
+```bash
+fly secrets set ARBFINDER_AGENT_TOKEN="$(python3 -c 'import secrets;print(secrets.token_hex(24))')"
+```
+
+Then follow **`docs/agent.md`** to run the agent on your Mac. In hosted mode the
+server no longer tries to scrape itself — jobs wait for the agent, and the page
+shows a 🟢/🔴 agent-connected banner.
+
+Alternatively, a paid unlocker (ScraperAPI, Zyte, Bright Data) can do the cloud
+scraping with no Mac — the fetch layer is built to accept it as a drop-in.
