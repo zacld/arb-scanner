@@ -1,6 +1,10 @@
-# Fly.io config. Rename `app` to your own unique name before first deploy
-# (or let `fly launch` set it). See docs/deploy.md for the full walkthrough.
-app = "arbfinder-CHANGEME"
+# Fly.io config. See docs/deploy.md for the full walkthrough.
+#
+# IMPORTANT: set `app` below to the exact name `fly launch` generated for you
+# (e.g. arb-scanner-solitary-snow-8410) — `fly secrets`/`fly deploy` read it from
+# here. And run ONE machine only (`fly scale count 1`): the SQLite job store +
+# scan worker are single-instance, so two machines would split your data.
+app = "REPLACE-WITH-YOUR-FLY-APP-NAME"
 primary_region = "lhr"   # London — close to the UK retail/eBay endpoints
 
 [build]

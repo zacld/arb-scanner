@@ -16,34 +16,44 @@ refresh.
   retailer scraping either run **local mode** on your Mac (`--via chrome`) or add
   a paid unlocker later (the fetch layer is pluggable — see "Later").
 
-## One-time setup
+## One-time setup (do these in order)
 
-1. Install the Fly CLI and sign in:
+1. **Install the Fly CLI and sign in:**
    ```bash
    brew install flyctl && fly auth login
    ```
-2. From the repo root, create the app (this also picks a unique name and writes
-   it into `fly.toml` — or edit `app = "..."` yourself first):
+2. **Create the app** (Fly generates a unique name and writes it into `fly.toml`):
    ```bash
    fly launch --no-deploy --copy-config
    ```
-3. Create the persistent volume for the jobs DB + results:
+   Note the name it prints (e.g. `arb-scanner-solitary-snow-8410`). Confirm
+   `fly.toml`'s `app =` line matches it — if not, set it:
+   ```bash
+   sed -i '' 's/^app = .*/app = "YOUR-APP-NAME-HERE"/' fly.toml && grep '^app' fly.toml
+   ```
+3. **Run ONE machine** (this app is single-instance — SQLite + worker):
+   ```bash
+   fly scale count 1
+   ```
+4. **Create the persistent volume** (jobs DB + results):
    ```bash
    fly volumes create arbfinder_data --size 1 --region lhr
    ```
-4. Set secrets (never commit these):
+5. **Set ALL secrets at once** — one line each, no stray spaces after `\`:
    ```bash
    fly secrets set \
      ARBFINDER_PASSWORD='a-strong-password' \
-     ARBFINDER_SECRET_KEY="$(python -c 'import secrets;print(secrets.token_hex(32))')" \
+     ARBFINDER_SECRET_KEY="$(python3 -c 'import secrets;print(secrets.token_hex(32))')" \
+     ARBFINDER_AGENT_TOKEN="$(python3 -c 'import secrets;print(secrets.token_hex(24))')" \
      EBAY_CLIENT_ID='your-ebay-app-id' \
      EBAY_CLIENT_SECRET='your-ebay-cert-id'
    ```
-   - `ARBFINDER_PASSWORD` turns on the login gate (without it the site is open —
-     always set it).
-   - `ARBFINDER_SECRET_KEY` signs the login cookie (stable so logins survive
-     restarts).
-   - eBay creds are read server-side only; they are never rendered in the page.
+   - `ARBFINDER_PASSWORD` — the login gate (without it the site is open; always set it).
+   - `ARBFINDER_SECRET_KEY` — signs the login cookie (stable across restarts).
+   - `ARBFINDER_AGENT_TOKEN` — lets your Mac agent connect (see below). **Save this
+     value** — you'll paste the same one into `~/.arbfinder-agent.env`. Read it
+     back any time with `fly ssh console -C 'printenv ARBFINDER_AGENT_TOKEN'`.
+   - eBay creds are read server-side only; never rendered in the page.
 
 ## Deploy
 
@@ -51,18 +61,22 @@ refresh.
 fly deploy
 ```
 
-Then `fly open` (or the URL Fly prints). On your phone: open the URL → sign in →
-tick **🔥 hunt trending** (or type a search term) → **Run scan** → watch the
-stage pipeline → results persist and reappear on refresh or another device.
+If it errors `needs volumes … lhr=1`, you have >1 machine — run `fly scale count 1`
+and deploy again. When it finishes, `fly apps open` (or the URL Fly prints). You
+should get the **login page**.
+
+**On the hosted site alone, live retail scraping is blocked** (data-centre IP), so
+a hunt shows "0 priced products". The fix is the **Mac agent** below — that's what
+makes scan-from-phone actually work.
 
 ## How it runs
 
-- `Dockerfile` uses Playwright's official Python image (Chromium + deps
-  bundled). `gunicorn` serves with **1 worker** (so the job store + scan worker
-  thread are single-instance) and threads for concurrent status polls.
+- `Dockerfile` uses Playwright's official Python image; `gunicorn` serves with
+  **1 worker** + threads (single-instance job store; concurrent status polls).
 - `ARBFINDER_HOSTED=1` (set in `fly.toml`) binds public, requires login, hides the
-  local-only controls (My-Chrome debug URL, eBay secret field, Update button),
-  and forces the in-container Chromium.
+  local-only controls (My-Chrome debug URL, eBay secret field, Update button), and
+  puts the app in **broker mode**: it does NOT run scans itself — queued jobs wait
+  for the Mac agent to claim and run them.
 - SQLite jobs DB + `results.csv` live on `/data` (the mounted volume), so they
   survive deploys/restarts.
 
@@ -77,15 +91,20 @@ reliable scraping path when you're at your Mac.
 Argos/Amazon block the data-centre IP, so live retail scraping fails from the
 cloud. The free fix is the **Mac agent**: your phone triggers scans on the hosted
 site, and a small worker on your Mac (residential IP + real Chrome) runs them and
-posts results back. Set one extra secret:
+posts results back. You already set `ARBFINDER_AGENT_TOKEN` in step 5 above — now
+on your Mac:
 
 ```bash
-fly secrets set ARBFINDER_AGENT_TOKEN="$(python3 -c 'import secrets;print(secrets.token_hex(24))')"
+cat > ~/.arbfinder-agent.env <<EOF
+export ARBFINDER_AGENT_URL='https://<your-app>.fly.dev'
+export ARBFINDER_AGENT_TOKEN='<the same token from step 5>'
+EOF
 ```
 
-Then follow **`docs/agent.md`** to run the agent on your Mac. In hosted mode the
-server no longer tries to scrape itself — jobs wait for the agent, and the page
-shows a 🟢/🔴 agent-connected banner.
+Then double-click **`scripts/agent.command`** (or `python -m arbfinder.agent`).
+Full details in **`docs/agent.md`**. In hosted mode the server no longer scrapes
+itself — jobs wait for the agent, and the page shows a 🟢/🔴 agent-connected
+banner.
 
 Alternatively, a paid unlocker (ScraperAPI, Zyte, Bright Data) can do the cloud
 scraping with no Mac — the fetch layer is built to accept it as a drop-in.
