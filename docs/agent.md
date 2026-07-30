@@ -35,16 +35,36 @@ If it's asleep, the job waits in the queue until the Mac is back.
    `~/.zshrc`): `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET`. The scan runs on the Mac,
    so it uses these — the cloud needs no eBay secret for scanning.
 
-## Run it
+## Run it — no terminal needed
 
-Double-click **`scripts/agent.command`** (or run it). It pulls the latest code,
-activates the venv, and starts polling. Leave the window open.
+Two ways, pick either (you can use both):
 
-Now open the hosted site on your phone — the banner shows **🟢 Mac agent
-connected** — type a scan or hunt, hit Run, and watch the pipeline. The scrape
-happens on your Mac; the result lands back in the site.
+### A. Always-on (recommended) — install once, runs forever
 
-Manual equivalent:
+Double-click **`scripts/install-agent-service.command`**. It registers the agent
+as a macOS background service (a LaunchAgent) that:
+
+- starts automatically every time you log in,
+- runs invisibly in the background — **no Terminal window**,
+- restarts itself if it crashes.
+
+After that you never touch it: your Mac just needs to be awake to serve a scan.
+Logs go to `~/Library/Logs/arbfinder-agent.log`. To turn it off, double-click
+**`scripts/uninstall-agent-service.command`**.
+
+### B. Manual — double-click to run when you want
+
+Double-click **`scripts/agent.command`**. It pulls the latest code, activates the
+venv, and starts polling in a small status window. Quit the window to stop. Good
+when you'd rather start/stop the agent yourself.
+
+### Then
+
+Open the hosted site on your phone — the banner shows **🟢 Mac agent connected**
+— type a scan or hunt, hit Run, and watch the pipeline. The scrape happens on your
+Mac; the result lands back in the site.
+
+Manual command-line equivalent (if you like the terminal after all):
 ```bash
 python -m arbfinder.agent --url https://<your-app>.fly.dev --token <TOKEN>
 ```

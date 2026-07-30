@@ -158,6 +158,50 @@ def test_hunt_mode_discovers_and_hunts(monkeypatch, tmp_path):
     assert 'href="/download"' in out                       # CSV export link
 
 
+def test_hunt_shows_near_misses_when_nothing_clears_gates(monkeypatch, tmp_path):
+    # A hunt that prices a product too thin to clear the gates must NOT dead-end:
+    # it shows the closest below-threshold rows so you can judge and adjust.
+    from arbfinder import browser as browser_mod, discover as discover_mod
+    from arbfinder.discover import Idea
+    from arbfinder.models import Comparison, Product
+
+    class _FakeFetcher:
+        def __init__(self, *a, **k):
+            pass
+
+        def close(self):
+            pass
+
+    class _FakeScraper:
+        def scrape(self, term, max_products=None):
+            return [Product(name=term, price=10.0, url="u", source="argos")]
+
+    from arbfinder.trends import cache as trends_cache
+    monkeypatch.setattr(trends_cache, "CACHE_PATH", tmp_path / "trends.json")
+    trends_cache._MEMO.clear()
+
+    monkeypatch.setattr(browser_mod, "BrowserFetcher", _FakeFetcher)
+    monkeypatch.setattr(discover_mod, "discover_bestsellers",
+                        lambda *a, **k: [Idea(term="Thin Margin Item", reason="Movers")])
+    monkeypatch.setattr(dashboard, "make_scraper", lambda *a, **k: _FakeScraper())
+    # buy £10 → sell £12: a real but tiny margin that a £50 net gate excludes.
+    comp = Comparison(product=Product(name="Thin Margin Item", price=10.0, url="u"),
+                      market="ebay", market_price=12.0, market_url="m",
+                      n_listings=3, matched_by="title")
+    monkeypatch.setattr(dashboard, "compare_products", lambda p, c, **k: [comp])
+    config.save_credentials("APPID", "SECRET")
+
+    out = dashboard._run_scan(
+        {"hunt": "1", "comparator": "ebay", "source": "argos", "fetch_mode": "browser",
+         "sig_manual": "1", "trend_terms": "thin", "min_net": "50",  # impossible gate
+         "ebay_id": "", "ebay_secret": ""})
+    assert "closest below-threshold" in out          # the near-miss banner fired
+    assert "£50.00 net" in out                        # the active gate is named
+    assert "Thin Margin Item" in out                  # the row is still shown
+    assert 'href="/download"' in out                  # and downloadable
+    assert "cleared the thresholds" not in out        # not the old dead-end message
+
+
 def test_profit_gate_defaults_prefilled_and_show_all_present():
     body = dashboard._render()
     # Fresh page pre-fills the profit gates (£5 net / 15% ROI / 80% match).

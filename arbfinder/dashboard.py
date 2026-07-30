@@ -183,6 +183,18 @@ def _opt_pct(raw: str):
         return None
 
 
+def _thresholds_label(min_net, min_roi, min_match) -> str:
+    """Human phrase for the active profit gates, for the near-miss banner."""
+    parts = []
+    if min_net is not None:
+        parts.append(f"£{min_net:.2f} net")
+    if min_roi is not None:
+        parts.append(f"{min_roi * 100:.0f}% ROI")
+    if min_match is not None:
+        parts.append(f"{min_match * 100:.0f}% match")
+    return " / ".join(parts) if parts else "profit gates"
+
+
 def _sig_chk(form, name: str, default: bool) -> str:
     """Checkbox state: reflect the submitted form, else the initial default."""
     if form:  # a submitted form (POST) — checkbox present only if it was ticked
@@ -500,9 +512,21 @@ def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
     ranked = rank_opportunities(opportunities, min_net=min_net, min_roi=min_roi, min_match=min_match)
     summary = _discovery_summary(targets)
     if not ranked:
-        return (summary + f'<p class="err">Discovered {len(targets)} categories but none of '
-                f'the {len(opportunities)} priced products cleared the thresholds. Lower Min '
-                'net £ / ROI % / match %, or add more signals.</p>')
+        if not opportunities:  # nothing was priced at all — genuinely empty
+            return (summary + f'<p class="err">Discovered {len(targets)} categories but no '
+                    'products could be priced (no credible resale matches). Add more signals, '
+                    'or check My Chrome cleared the retailer bot-check.</p>')
+        # Priced products exist but none cleared the gates — never dead-end.
+        # Show the closest near-misses so you can judge and adjust, clearly flagged.
+        fallback = rank_opportunities(opportunities)[:limit]
+        write_opportunities_csv(fallback, RESULTS_PATH)
+        gates = _thresholds_label(min_net, min_roi, min_match)
+        banner = (f'<p class="err">None of the {len(opportunities)} priced product(s) cleared '
+                  f'your {gates} — showing the {len(fallback)} closest below-threshold, most '
+                  'profitable first, so you can judge. Lower the gates or tick "Show all '
+                  'results" to keep results like these.</p>')
+        return (summary + banner + _opportunities_table(fallback)
+                + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
     write_opportunities_csv(ranked, RESULTS_PATH)
     return (summary + _opportunities_table(ranked)
             + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
