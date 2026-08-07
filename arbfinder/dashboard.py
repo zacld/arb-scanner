@@ -296,6 +296,22 @@ PAGE = """<!doctype html>
     <span style="font-weight:400;color:#888">(comma-separated, feeds “Manual”)</span>
    <input name="trend_terms" placeholder="teeth whitening strips, stanley cup" value="{trend_terms}"></label>
  </div>
+ <label class="wide" style="flex-direction:row;align-items:center;gap:.5rem;font-weight:600">
+  <input type="checkbox" name="mismatch" value="1" {mismatch_chk} style="width:auto">
+  🎯 Or Mismatch scan — sweep a whole Argos category / Sale and let the price gap
+  surface winners (buy Argos → resale Amazon primary, eBay secondary)</label>
+ <div class="wide" style="background:rgba(127,127,127,.06);border-radius:8px;padding:.6rem .8rem">
+  <div style="display:flex;flex-wrap:wrap;gap:.6rem 1rem;align-items:flex-end">
+   <label style="font-weight:400">Category to sweep
+    <select name="category">{category_options}</select></label>
+   <label style="font-weight:400">Pages <span style="color:#888">(~60 items/page)</span>
+    <input name="pages" type="number" min="1" max="10" value="{pages}" style="width:5rem"></label>
+   <label style="font-weight:400;flex:1;min-width:13rem">…or paste an Argos category/Sale URL or term
+    <input name="category_url" placeholder="https://www.argos.co.uk/list/sale" value="{category_url}"></label>
+  </div>
+  <p class="note" style="margin:.4rem 0 0">Amazon is checked first (the lead resale number); eBay is
+   the secondary comparison. Prices are active-listing asks, not sold data.</p>
+ </div>
  <label class="local-only">Fetch via
   <select name="fetch_mode">
    <option value="chrome" {fm_chrome}>My Chrome (autonomous — recommended)</option>
@@ -415,10 +431,21 @@ def _discovery_summary(targets) -> str:
 
 
 def _opportunities_table(opps) -> str:
+    # Multi-venue (mismatch scan) mode: rows may resell on different venues, and
+    # each carries a secondary venue's price. Then we show a per-row "Sell on"
+    # column + the 2nd venue's price. A single-venue hunt keeps the classic layout.
+    multi = any(getattr(o, "secondary_market", None) for o in opps) or \
+        len({o.marketplace_match.market for o in opps}) > 1
     market = getattr(opps[0].marketplace_match, "market", "resale")
-    head = (f"<tr><th>Product</th><th>Source</th><th>Buy £</th>"
-            f"<th>Est. {html.escape(market)} £</th>"
-            "<th>Net £</th><th>ROI</th><th>Score</th><th>Dem</th><th>Match</th><th>T/S</th></tr>")
+
+    if multi:
+        head = ("<tr><th>Product</th><th>Source</th><th>Buy £</th><th>Sell on</th>"
+                "<th>Resale £</th><th>2nd venue £</th><th>Net £</th><th>ROI</th>"
+                "<th>Score</th><th>Dem</th><th>Match</th></tr>")
+    else:
+        head = (f"<tr><th>Product</th><th>Source</th><th>Buy £</th>"
+                f"<th>Est. {html.escape(market)} £</th>"
+                "<th>Net £</th><th>ROI</th><th>Score</th><th>Dem</th><th>Match</th><th>T/S</th></tr>")
     rows = []
     for o in opps:
         c, p = o.marketplace_match, o.retailer_product
@@ -428,21 +455,45 @@ def _opportunities_table(opps) -> str:
         mcell = (f'<a href="{html.escape(murl)}" target="_blank" rel="noopener">'
                  f'{o.expected_sale_price:.2f}</a>' if murl else f"{o.expected_sale_price:.2f}")
         src = SOURCES[p.source].label if p.source in SOURCES else p.source
-        ts = max(o.trend_strength, o.seasonal_strength)
-        rows.append(
-            f"<tr><td>{plink}</td><td>{html.escape(src)}</td><td>{o.buy_price:.2f}</td>"
-            f"<td>{mcell}</td>{_fmt_signed(o.estimated_net_profit)}"
-            f"<td>{o.roi * 100:.0f}%</td><td>{o.opportunity_score:.2f}</td>"
-            f"<td>{o.demand_confidence:.2f}</td><td>{o.match_confidence:.2f}</td>"
-            f"<td>{ts:.2f}</td></tr>")
-    return (
-        f"<table>{head}{''.join(rows)}</table>"
-        f'<p class="note"><b>“Est. {html.escape(market)} £” is the median of ACTIVE '
-        f'{html.escape(market)} listings — asking prices, not completed/sold data.</b> It '
-        'shows the potential spread, not a confirmed sale price; Net £ and ROI are derived '
-        'from it. Verify sold volume, realistic sale price, postage and stock before buying. '
-        'Sorted profit-first: net → ROI → demand → match → trend/seasonal. Dem/Match/T-S are '
-        f'0–1 confidences. {len(opps)} opportunity(ies).</p>')
+        if multi:
+            sec = getattr(o, "secondary_market", None)
+            surl = getattr(o, "secondary_url", None) or ""
+            if o.secondary_price is not None:
+                s2 = f"{o.secondary_price:.2f}"
+                s2cell = (f'{html.escape(sec)} <a href="{html.escape(surl)}" target="_blank" '
+                          f'rel="noopener">{s2}</a>' if surl else f"{html.escape(sec)} {s2}")
+            else:
+                s2cell = "—"
+            rows.append(
+                f"<tr><td>{plink}</td><td>{html.escape(src)}</td><td>{o.buy_price:.2f}</td>"
+                f"<td>{html.escape(c.market)}</td><td>{mcell}</td><td>{s2cell}</td>"
+                f"{_fmt_signed(o.estimated_net_profit)}"
+                f"<td>{o.roi * 100:.0f}%</td><td>{o.opportunity_score:.2f}</td>"
+                f"<td>{o.demand_confidence:.2f}</td><td>{o.match_confidence:.2f}</td></tr>")
+        else:
+            ts = max(o.trend_strength, o.seasonal_strength)
+            rows.append(
+                f"<tr><td>{plink}</td><td>{html.escape(src)}</td><td>{o.buy_price:.2f}</td>"
+                f"<td>{mcell}</td>{_fmt_signed(o.estimated_net_profit)}"
+                f"<td>{o.roi * 100:.0f}%</td><td>{o.opportunity_score:.2f}</td>"
+                f"<td>{o.demand_confidence:.2f}</td><td>{o.match_confidence:.2f}</td>"
+                f"<td>{ts:.2f}</td></tr>")
+
+    if multi:
+        note = ('<b>Buy at Argos → resell online. "Resale £" is the chosen venue\'s median '
+                'of ACTIVE listings (Amazon preferred, else eBay); "2nd venue £" is the other '
+                'venue for comparison — both are asking prices, NOT completed/sold data.</b> '
+                'Net £ and ROI derive from the chosen venue. Verify realistic sale price, fees, '
+                'postage and stock before buying. Sorted profit-first: net → ROI → demand → '
+                f'match. {len(opps)} opportunity(ies).')
+    else:
+        note = (f'<b>“Est. {html.escape(market)} £” is the median of ACTIVE '
+                f'{html.escape(market)} listings — asking prices, not completed/sold data.</b> It '
+                'shows the potential spread, not a confirmed sale price; Net £ and ROI are derived '
+                'from it. Verify sold volume, realistic sale price, postage and stock before buying. '
+                'Sorted profit-first: net → ROI → demand → match → trend/seasonal. Dem/Match/T-S are '
+                f'0–1 confidences. {len(opps)} opportunity(ies).')
+    return f"<table>{head}{''.join(rows)}</table><p class=\"note\">{note}</p>"
 
 
 def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
@@ -532,6 +583,103 @@ def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
             + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
 
 
+def _run_mismatch(form, fetch_mode, cdp_url, fees, postage, max_products,
+                  min_net, min_roi, min_match, progress=None) -> str:
+    """Wide-net mismatch scan: sweep an Argos category, price every product on
+    Amazon (primary) + eBay (secondary), surface the profitable gaps."""
+    from .browser import BrowserFetcher
+    from .http import PoliteSession
+    from .mismatch import ARGOS_CATEGORIES, compare_mismatch, sweep_products
+    from .opportunity import rank_opportunities, write_opportunities_csv
+    from .sources.base import resolve_target
+
+    progress = progress or (lambda *a, **k: None)
+    source = "argos"
+    # A pasted URL/term wins over the category dropdown (sidesteps stale presets).
+    target = (form.get("category_url", "").strip()
+              or form.get("category", "").strip() or "sale")
+    try:
+        pages = max(1, min(int(form.get("pages") or 3), 10))
+    except ValueError:
+        pages = 3
+    if HOSTED:  # server can't reach your Mac's Chrome — use in-container Chromium
+        fetch_mode = "browser"
+
+    # Primary resale venue = Amazon (real Chrome); secondary = eBay (Browse API,
+    # only if credentials are available — otherwise we run Amazon-only).
+    from .comparators.amazon import AmazonClient
+    primary = AmazonClient(cdp_url=(cdp_url if fetch_mode == "chrome" else None),
+                           headless=False, interactive=False)
+    secondary = None
+    saved = config.load_credentials()
+    cid = form.get("ebay_id", "").strip() or saved["ebay_client_id"]
+    secret = form.get("ebay_secret", "").strip() or saved["ebay_client_secret"]
+    if cid and secret:
+        if form.get("remember"):
+            config.save_credentials(cid, secret)
+        from .comparators.ebay import EbayBrowseClient
+        env = "SANDBOX" if form.get("ebay_env") == "SANDBOX" else "PRODUCTION"
+        secondary = EbayBrowseClient(cid, secret, env=env)
+
+    open_url = ARGOS_CATEGORIES[target][1] if target in ARGOS_CATEGORIES \
+        else resolve_target(source, target)
+    label = ARGOS_CATEGORIES[target][0] if target in ARGOS_CATEGORIES else target
+
+    fetcher = None
+    try:
+        if fetch_mode == "chrome":
+            from .chrome_launch import ensure_chrome
+            ok, chrome_msg = ensure_chrome(cdp_url, open_url=open_url)
+            if not ok:
+                return f'<p class="err">{html.escape(chrome_msg)}</p>'
+            fetcher = BrowserFetcher(cdp_url=cdp_url)
+            scraper = make_scraper(source, PoliteSession(), fetcher, fetch_mode="browser")
+        else:
+            fetcher = BrowserFetcher(headless=False)
+            scraper = make_scraper(source, PoliteSession(), fetcher)
+
+        progress("searching_retailer", f"sweeping Argos {label} ({pages} page(s))")
+        products = sweep_products(scraper, target, pages=pages, max_products=max_products)
+        if not products:
+            return ('<p class="err">Swept the Argos pool but found no products — the category '
+                    'link may have changed. Paste a live Argos category/Sale URL in the field '
+                    'and try again, or check My Chrome cleared the bot-check.</p>')
+        progress("collecting_prices",
+                 f"pricing {len(products)} products on Amazon + eBay")
+        opportunities = compare_mismatch(products, primary, secondary, fees, postage)
+    except ScrapeBlocked as exc:
+        return f'<p class="err">{html.escape(str(exc).splitlines()[-1])}</p>'
+    finally:
+        for c in (fetcher, primary):
+            try:
+                if c is not None:
+                    c.close()
+            except Exception:  # noqa: BLE001 - teardown is best-effort
+                pass
+
+    progress("calculating", "ranking opportunities by net profit & ROI")
+    summary = (f'<p class="note">Swept <b>{len(products)}</b> products from Argos '
+               f'<b>{html.escape(str(label))}</b>, priced on Amazon (primary) + eBay '
+               '(secondary).</p>')
+    ranked = rank_opportunities(opportunities, min_net=min_net, min_roi=min_roi,
+                                min_match=min_match)
+    if not ranked:
+        if not opportunities:
+            return (summary + '<p class="err">None of the swept products had a credible resale '
+                    'match on Amazon or eBay. Try a different category, or more pages.</p>')
+        fallback = rank_opportunities(opportunities)[: (max_products or 20)]
+        write_opportunities_csv(fallback, RESULTS_PATH)
+        gates = _thresholds_label(min_net, min_roi, min_match)
+        banner = (f'<p class="err">None of the {len(opportunities)} priced product(s) cleared '
+                  f'your {gates} — showing the {len(fallback)} closest below-threshold, most '
+                  'profitable first. Lower the gates or tick "Show all results".</p>')
+        return (summary + banner + _opportunities_table(fallback)
+                + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
+    write_opportunities_csv(ranked, RESULTS_PATH)
+    return (summary + _opportunities_table(ranked)
+            + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
+
+
 def _run_scan(form, files=None, progress=None) -> str:
     files = files or {}
     progress = progress or (lambda *a, **k: None)
@@ -560,6 +708,11 @@ def _run_scan(form, files=None, progress=None) -> str:
     min_match = _opt_pct(form.get("min_match"))    # "80" -> 0.80
     if form.get("show_all"):  # escape hatch: drop the profit gates for this scan
         min_net = min_roi = min_match = None
+
+    if form.get("mismatch"):  # wide-net sweep: buy Argos, resale Amazon+eBay
+        return _run_mismatch(form, fetch_mode, cdp_url, fees, postage,
+                             max_products, min_net, min_roi, min_match, progress)
+
     signals = [name for name, field in SIGNAL_FIELDS.items() if form.get(field)] or DEFAULT_SIGNALS
     trend_terms = [t.strip() for t in (form.get("trend_terms", "") or "")
                    .replace("\n", ",").split(",") if t.strip()]
@@ -697,6 +850,16 @@ def _source_options(form) -> str:
     return "".join(opts)
 
 
+def _category_options(form) -> str:
+    from .mismatch import ARGOS_CATEGORIES
+    selected = form.get("category") or "sale"
+    opts = []
+    for key, (label, _url) in ARGOS_CATEGORIES.items():
+        sel = "selected" if key == selected else ""
+        opts.append(f'<option value="{html.escape(key)}" {sel}>{html.escape(label)}</option>')
+    return "".join(opts)
+
+
 def _render(results: str = "", form=None) -> str:
     form = form or {}
     comparator = form.get("comparator", "ebay")
@@ -738,6 +901,10 @@ def _render(results: str = "", form=None) -> str:
         chrome_status=chrome_status,
         hunt_chk="checked" if form.get("hunt") else "",
         trend_terms=html.escape(form.get("trend_terms", "")),
+        mismatch_chk="checked" if form.get("mismatch") else "",
+        category_options=_category_options(form),
+        pages=html.escape(str(form.get("pages", "3"))),
+        category_url=html.escape(form.get("category_url", "")),
         sig_movers=_sig_chk(form, "movers", True),
         sig_bestsellers=_sig_chk(form, "bestsellers", False),
         sig_seasonal=_sig_chk(form, "seasonal", True),

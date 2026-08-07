@@ -67,6 +67,13 @@ class ArbitrageOpportunity:
     seasonal_strength: float
     opportunity_score: float
 
+    # Secondary resale venue (the mismatch scan checks two: e.g. Amazon primary,
+    # eBay secondary). These describe the OTHER venue for comparison/display only;
+    # net/ROI/score above always derive from `marketplace_match` (the chosen one).
+    secondary_market: str | None = None
+    secondary_price: float | None = None
+    secondary_url: str | None = None
+
 
 class TrendSignalProvider(ABC):
     """A pluggable demand-signal source. Swap/remove providers independently."""

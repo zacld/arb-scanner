@@ -202,6 +202,69 @@ def test_hunt_shows_near_misses_when_nothing_clears_gates(monkeypatch, tmp_path)
     assert "cleared the thresholds" not in out        # not the old dead-end message
 
 
+class _FakeComparator:
+    """Duck-types a comparator; returns listings titled like the query."""
+
+    def __init__(self, market, price, n, min_listings=1, *a, **k):
+        self.market_name = market
+        self.resale_market = True
+        self.default_min_listings = min_listings
+        self._price, self._n = price, n
+
+    def search(self, query=None, gtin=None, **_):
+        from arbfinder.models import ComparableListing
+        term = query or gtin or ""
+        if self._n <= 0:
+            return []
+        return [ComparableListing(title=term, price=self._price, shipping=0.0,
+                                  url=f"https://{self.market_name}/{i}", condition="",
+                                  seller=self.market_name) for i in range(self._n)]
+
+    def close(self):
+        pass
+
+
+def test_mismatch_scan_sweeps_and_prices_on_amazon_and_ebay(monkeypatch):
+    # Wide-net mismatch scan: sweep an Argos category (stubbed), price each on
+    # Amazon (primary) + eBay (secondary), surface the profitable gap.
+    from arbfinder import browser as browser_mod
+    from arbfinder.comparators import amazon as amazon_mod, ebay as ebay_mod
+    from arbfinder.models import Product
+
+    class _FakeFetcher:
+        def __init__(self, *a, **k): pass
+        def close(self): pass
+
+    class _FakeScraper:
+        def scrape(self, url):
+            return [Product(name="Widget", price=10.0,
+                            url="https://argos/widget", source="argos")]
+
+    monkeypatch.setattr(browser_mod, "BrowserFetcher", _FakeFetcher)
+    monkeypatch.setattr(dashboard, "make_scraper", lambda *a, **k: _FakeScraper())
+    monkeypatch.setattr(amazon_mod, "AmazonClient",
+                        lambda *a, **k: _FakeComparator("amazon", 30.0, 1))
+    monkeypatch.setattr(ebay_mod, "EbayBrowseClient",
+                        lambda *a, **k: _FakeComparator("ebay", 28.0, 3, min_listings=3))
+    config.save_credentials("APPID", "SECRET")  # so the eBay secondary is built
+
+    out = dashboard._run_scan(
+        {"mismatch": "1", "fetch_mode": "browser", "source": "argos",
+         "category": "sale", "pages": "1", "show_all": "1",
+         "ebay_id": "", "ebay_secret": ""})
+    assert "Swept" in out and "Widget" in out          # sweep summary + product row
+    assert "Sell on" in out                             # multi-venue column present
+    assert "amazon" in out and "ebay" in out            # both venues shown
+    assert 'href="/download"' in out                    # CSV export
+
+
+def test_mismatch_controls_render():
+    body = dashboard._render()
+    assert 'name="mismatch"' in body
+    assert 'name="category"' in body and "Sale / Clearance" in body
+    assert 'name="category_url"' in body
+
+
 def test_profit_gate_defaults_prefilled_and_show_all_present():
     body = dashboard._render()
     # Fresh page pre-fills the profit gates (£5 net / 15% ROI / 80% match).
