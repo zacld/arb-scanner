@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import logging
 
-from .opportunity import build_opportunity
-from .pipeline import compare_products
 from .sources.base import ScrapeBlocked, resolve_target
 
 log = logging.getLogger(__name__)
@@ -72,39 +70,3 @@ def sweep_products(scraper, target: str, *, source_name: str = "argos",
         if max_products and len(out) >= max_products:
             return out[:max_products]
     return out
-
-
-def compare_mismatch(products, primary_client, secondary_client, fees: float,
-                     postage: float, *, min_score: float = 85.0,
-                     trend: float = 0.0, seasonal: float = 0.0):
-    """Price each product on the primary venue, then the secondary.
-
-    Build the opportunity off the PRIMARY venue's resale price when it has a
-    credible match; otherwise fall back to the secondary. The other venue's
-    price (when present) is attached for display so you can compare Amazon vs
-    eBay at a glance. Net profit / ROI / score come from the chosen venue only.
-    """
-    prim = {c.product.url: c for c in compare_products(products, primary_client, min_score)}
-    sec: dict[str, object] = {}
-    if secondary_client is not None:
-        sec = {c.product.url: c for c in compare_products(products, secondary_client, min_score)}
-
-    opps = []
-    for p in products:
-        prim_c = prim.get(p.url)
-        sec_c = sec.get(p.url)
-        chosen = prim_c or sec_c
-        if chosen is None:
-            continue  # no credible resale on either venue
-        o = build_opportunity(chosen, fees, postage, trend, seasonal)
-        if o is None:
-            continue
-        # Attach the OTHER venue only when the primary was used (so a fall-back
-        # to secondary doesn't claim a phantom primary number).
-        other = sec_c if prim_c is not None else None
-        if other is not None:
-            o.secondary_market = other.market
-            o.secondary_price = other.market_price
-            o.secondary_url = other.market_url
-        opps.append(o)
-    return opps

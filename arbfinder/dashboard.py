@@ -309,8 +309,9 @@ PAGE = """<!doctype html>
    <label style="font-weight:400;flex:1;min-width:13rem">…or paste an Argos category/Sale URL or term
     <input name="category_url" placeholder="https://www.argos.co.uk/list/sale" value="{category_url}"></label>
   </div>
-  <p class="note" style="margin:.4rem 0 0">Amazon is checked first (the lead resale number); eBay is
-   the secondary comparison. Prices are active-listing asks, not sold data.</p>
+  <p class="note" style="margin:.4rem 0 0">eBay's free API prices the whole sweep, then only the
+   profitable survivors are confirmed on Amazon — the better flip leads each row, the other venue is
+   shown alongside. Prices are active-listing asks, not sold data.</p>
  </div>
  <label class="local-only">Fetch via
   <select name="fetch_mode">
@@ -585,12 +586,16 @@ def _run_hunt(client, comparator, source, fetch_mode, cdp_url, fees, postage,
 
 def _run_mismatch(form, fetch_mode, cdp_url, fees, postage, max_products,
                   min_net, min_roi, min_match, progress=None) -> str:
-    """Wide-net mismatch scan: sweep an Argos category, price every product on
-    Amazon (primary) + eBay (secondary), surface the profitable gaps."""
+    """Wide-net mismatch scan through the two-stage funnel: sweep an Argos
+    category, price the whole pool on eBay's free API (cheap wide filter), then
+    confirm only the survivors on Amazon (the expensive browser step). The
+    higher-net venue leads each row; the other is shown alongside."""
     from .browser import BrowserFetcher
+    from .funnel import find_opportunities
     from .http import PoliteSession
-    from .mismatch import ARGOS_CATEGORIES, compare_mismatch, sweep_products
+    from .mismatch import ARGOS_CATEGORIES, sweep_products
     from .opportunity import rank_opportunities, write_opportunities_csv
+    from .providers import amazon_provider, ebay_provider
     from .sources.base import resolve_target
 
     progress = progress or (lambda *a, **k: None)
@@ -605,21 +610,22 @@ def _run_mismatch(form, fetch_mode, cdp_url, fees, postage, max_products,
     if HOSTED:  # server can't reach your Mac's Chrome — use in-container Chromium
         fetch_mode = "browser"
 
-    # Primary resale venue = Amazon (real Chrome); secondary = eBay (Browse API,
-    # only if credentials are available — otherwise we run Amazon-only).
-    from .comparators.amazon import AmazonClient
-    primary = AmazonClient(cdp_url=(cdp_url if fetch_mode == "chrome" else None),
-                           headless=False, interactive=False)
-    secondary = None
+    # Cheap wide filter = eBay Browse API (free, no browser) when creds exist;
+    # expensive enrich = Amazon via real Chrome. Without eBay creds we fall back
+    # to Amazon-only (no cheap stage) — slower, so keep the pool small.
     saved = config.load_credentials()
     cid = form.get("ebay_id", "").strip() or saved["ebay_client_id"]
     secret = form.get("ebay_secret", "").strip() or saved["ebay_client_secret"]
+    amazon = amazon_provider(cdp_url if fetch_mode == "chrome" else None)
     if cid and secret:
         if form.get("remember"):
             config.save_credentials(cid, secret)
-        from .comparators.ebay import EbayBrowseClient
         env = "SANDBOX" if form.get("ebay_env") == "SANDBOX" else "PRODUCTION"
-        secondary = EbayBrowseClient(cid, secret, env=env)
+        cheap, rich = ebay_provider(cid, secret, env=env), amazon
+        venues = "eBay API (wide) → Amazon (confirm winners)"
+    else:
+        cheap, rich = amazon, None  # Amazon-only, no cheap pre-filter
+        venues = "Amazon only (add an eBay key to filter cheaply first)"
 
     open_url = ARGOS_CATEGORIES[target][1] if target in ARGOS_CATEGORIES \
         else resolve_target(source, target)
@@ -644,39 +650,38 @@ def _run_mismatch(form, fetch_mode, cdp_url, fees, postage, max_products,
             return ('<p class="err">Swept the Argos pool but found no products — the category '
                     'link may have changed. Paste a live Argos category/Sale URL in the field '
                     'and try again, or check My Chrome cleared the bot-check.</p>')
-        progress("collecting_prices",
-                 f"pricing {len(products)} products on Amazon + eBay")
-        opportunities = compare_mismatch(products, primary, secondary, fees, postage)
+        result = find_opportunities(
+            products, cheap, rich, fees=fees, postage=postage,
+            min_net=min_net, min_roi=min_roi, min_match=min_match,
+            enrich_cap=(max_products or 20), progress=progress)
     except ScrapeBlocked as exc:
         return f'<p class="err">{html.escape(str(exc).splitlines()[-1])}</p>'
     finally:
-        for c in (fetcher, primary):
+        for c in (fetcher, amazon):
             try:
-                if c is not None:
-                    c.close()
+                c.close()
             except Exception:  # noqa: BLE001 - teardown is best-effort
                 pass
 
     progress("calculating", "ranking opportunities by net profit & ROI")
     summary = (f'<p class="note">Swept <b>{len(products)}</b> products from Argos '
-               f'<b>{html.escape(str(label))}</b>, priced on Amazon (primary) + eBay '
-               '(secondary).</p>')
-    ranked = rank_opportunities(opportunities, min_net=min_net, min_roi=min_roi,
-                                min_match=min_match)
-    if not ranked:
-        if not opportunities:
+               f'<b>{html.escape(str(label))}</b> · priced via {html.escape(venues)}.</p>')
+    if not result.opportunities:
+        if not result.staged:
             return (summary + '<p class="err">None of the swept products had a credible resale '
-                    'match on Amazon or eBay. Try a different category, or more pages.</p>')
-        fallback = rank_opportunities(opportunities)[: (max_products or 20)]
+                    'match. Try a different category, or more pages.</p>')
+        # Nothing cleared the gates — show the closest cheap-stage near-misses
+        # (already priced for free, so no extra cost) rather than dead-end.
+        fallback = result.staged[: (max_products or 20)]
         write_opportunities_csv(fallback, RESULTS_PATH)
         gates = _thresholds_label(min_net, min_roi, min_match)
-        banner = (f'<p class="err">None of the {len(opportunities)} priced product(s) cleared '
+        banner = (f'<p class="err">None of the {result.n_priced} priced product(s) cleared '
                   f'your {gates} — showing the {len(fallback)} closest below-threshold, most '
                   'profitable first. Lower the gates or tick "Show all results".</p>')
         return (summary + banner + _opportunities_table(fallback)
                 + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
-    write_opportunities_csv(ranked, RESULTS_PATH)
-    return (summary + _opportunities_table(ranked)
+    write_opportunities_csv(result.opportunities, RESULTS_PATH)
+    return (summary + _opportunities_table(result.opportunities)
             + '<p class="note"><a href="/download">⬇ Download results.csv</a></p>')
 
 
