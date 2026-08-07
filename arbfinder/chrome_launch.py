@@ -104,6 +104,13 @@ def ensure_chrome(
         f"--user-data-dir={DEBUG_PROFILE}",
         "--no-first-run",
         "--no-default-browser-check",
+        # SAFETY: this is a scraping browser, never a personal one. Disable ALL
+        # extensions so a wallet (e.g. Phantom) or anything else can't load or be
+        # reached by a page we visit, and disable sync so a signed-in Google
+        # account can't pull your extensions/logins into this profile. Never sign
+        # into personal accounts or a wallet in this window.
+        "--disable-extensions",
+        "--disable-sync",
     ]
     if open_url:
         args.append(open_url)
