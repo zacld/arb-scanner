@@ -16,6 +16,7 @@ and cookies are untouched.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -31,6 +32,38 @@ log = logging.getLogger(__name__)
 # Dedicated profile — matches scripts/chrome-debug.command so the manual and
 # automatic launchers share one cleared session.
 DEBUG_PROFILE = Path.home() / ".arbfinder-chrome-debug"
+
+
+def profile_looks_personal(profile_dir: Path = DEBUG_PROFILE) -> tuple[bool, str]:
+    """Best-effort: has the throwaway scraping profile been contaminated?
+
+    The scraping Chrome must never hold a real identity. If someone signs into
+    Google in it, Sync can pull their extensions (e.g. a Phantom wallet) and
+    logins in — which is how Gmail/a wallet can appear in a window automation is
+    driving. We flag two tells on disk: installed extensions, or a signed-in
+    account. Returns ``(looks_personal, human_reason)``; never raises.
+    """
+    default = profile_dir / "Default"
+    try:
+        ext_dir = default / "Extensions"
+        if ext_dir.is_dir():
+            installed = [p.name for p in ext_dir.iterdir()
+                         if p.is_dir() and not p.name.startswith(".")]
+            if installed:
+                return True, f"{len(installed)} browser extension(s) installed"
+    except OSError:
+        pass
+    try:
+        data = json.loads((default / "Preferences").read_text(encoding="utf-8"))
+        accounts = data.get("account_info") or []
+        if accounts:
+            email = accounts[0].get("email") or "a Google account"
+            return True, f"signed into {email}"
+        if data.get("google", {}).get("services", {}).get("last_account_id"):
+            return True, "a Google account is signed in"
+    except (OSError, ValueError):
+        pass
+    return False, ""
 
 # Talk to the local DevTools port directly, never through an HTTP(S) proxy.
 _opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -89,6 +122,20 @@ def ensure_chrome(
     ``open_url`` first (so a first-ever visit warms/clears the bot check), and
     waits up to ``wait_s`` for the port to answer.
     """
+    # SAFETY GUARD: never drive a contaminated scraping profile. If ours has been
+    # signed in / had extensions installed, refuse (whether it's already running
+    # or not) and tell the user to reset it — so a wallet/Gmail can't be surfaced
+    # in the automated window again.
+    personal, why = profile_looks_personal(DEBUG_PROFILE)
+    if personal:
+        return False, (
+            f"Refusing to launch: the scraping Chrome profile has {why}. This must be a "
+            "throwaway browser — a signed-in account or an extension (e.g. a wallet) has no "
+            "place in the window the scraper drives. Reset it and try again:\n"
+            "  pkill -f 'remote-debugging-port=9222'; rm -rf ~/.arbfinder-chrome-debug\n"
+            "Then never sign into Google, email, or a wallet in that Chrome window."
+        )
+
     if is_running(cdp_url):
         return True, "Reusing the Chrome already open on the debugging port."
     binary = _chrome_binary()
