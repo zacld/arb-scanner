@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# One command, one URL:  ./apply https://job-boards.greenhouse.io/acme/jobs/123
+# Fills the form and stops for review. Nothing is sent without --submit.
+cd "$(dirname "$0")" && exec python3 -m cvagent.apply.runner "$@"

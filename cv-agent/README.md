@@ -1,17 +1,33 @@
 # CV Tailoring Agent
 
-Tailors Zac's CV to a specific job listing, then fills in the application form with it.
+Send it a job link. It reads the advert off the page, tailors the CV to it, fills
+in the application form, and stops so you can look before anything is sent.
 
-## Setup
+```bash
+./apply https://job-boards.greenhouse.io/acme/jobs/4012345
+```
+
+That is the whole thing. No pasting the advert, no flags. It opens a browser you
+can watch, fills every field it can answer honestly, attaches a freshly tailored
+CV as a PDF, and leaves the questions only you should answer — salary, notice
+period, visa status, anything demographic — flagged and blank.
+
+Add `--submit` when you have read it and want it sent; it still asks you to type
+`submit` to confirm, and refuses outright if any field is flagged or did not fill
+cleanly.
+
+One-time setup:
 
 ```bash
 pip install -r cv-agent/requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...        # stays server-side, never in the browser
+playwright install chromium
+export ANTHROPIC_API_KEY=sk-ant-...     # stays on your machine, never in the browser
 ```
 
-For Stage 2 only: `playwright install chromium`.
+LinkedIn is the exception: it blocks scrapers, so paste the advert into a file
+and pass `--listing listing.txt` alongside the URL.
 
-## Stage 1 — tailor a CV
+## Stage 1 — tailor a CV by hand
 
 ```bash
 cd cv-agent && python -m cvagent.server        # http://127.0.0.1:8000
@@ -38,19 +54,16 @@ changes address that:
    fails, the UI says so rather than quietly shipping a copy.
 
 To confirm the wording — not just the role selection — actually shifts between a
-finance listing and a tech listing:
-
-```bash
-python scripts/compare_tailoring.py
-```
+finance listing and a tech listing: `python scripts/live_check.py --step tailoring`.
 
 ## Stage 2 — fill an application form
 
 ```bash
-python -m cvagent.apply.runner --url <application URL> --listing listing.txt
+./apply <job posting URL>
 ```
 
-Tailors the CV, renders it to PDF, opens the form in Chromium, maps every field
+Reads the advert off the page, tailors the CV, renders it to PDF, opens the form
+in Chromium, maps every field
 (regex for the standard contact fields, Claude for everything else), fills it,
 reads every value back out of the page, screenshots it, and **stops**. Nothing is
 submitted unless you pass `--submit` and then type `submit` at the prompt — and a
@@ -115,5 +128,5 @@ actually wants rather than a throwaway test.
 ## Tests
 
 ```bash
-python -m pytest tests -q     # 65 tests, all offline, no API key needed
+python -m pytest tests -q     # 70 tests, all offline, no API key needed
 ```

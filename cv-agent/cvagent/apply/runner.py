@@ -8,7 +8,7 @@ changes their form.
 Nothing is ever submitted without an explicit, typed confirmation. The default
 run fills the form, screenshots it and stops.
 
-    python -m cvagent.apply.runner --url <application url> --listing listing.txt
+    python -m cvagent.apply.runner <job posting url>
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from ..render import render_cv_page
 from ..tailor import tailor_cv
 from .browser import launch_chromium
 from .forms import FormField, application_form_fields, extract_fields, read_values
+from .listing import extract_listing_text, looks_usable
 from .mapper import Assignment, map_form
 from .profile import build_profile
 
@@ -37,20 +38,33 @@ SUBMIT_SELECTORS = [
 ]
 
 
-def write_cv_pdf(html: str, destination: Path) -> Path:
-    """Render the CV page to PDF with headless Chromium (same engine as the preview)."""
+def write_cv_pdf(html: str, destination: Path, playwright: Any = None) -> Path:
+    """Render the CV page to PDF with headless Chromium (same engine as the preview).
+
+    Always its own headless browser, even mid-run: Chromium only generates PDFs
+    headlessly, so the visible browser Zac is watching the form in cannot do it.
+    Pass the active playwright instance when one exists — nesting a second
+    sync_playwright context inside a live one raises.
+    """
     from playwright.sync_api import sync_playwright
 
     with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as handle:
         handle.write(html)
         source = Path(handle.name)
+
+    def render(p: Any) -> None:
+        browser = launch_chromium(p, headless=True)
+        page = browser.new_page()
+        page.goto(source.as_uri())
+        page.pdf(path=str(destination), format="A4", print_background=True)
+        browser.close()
+
     try:
-        with sync_playwright() as p:
-            browser = launch_chromium(p)
-            page = browser.new_page()
-            page.goto(source.as_uri())
-            page.pdf(path=str(destination), format="A4", print_background=True)
-            browser.close()
+        if playwright is not None:
+            render(playwright)
+        else:
+            with sync_playwright() as p:
+                render(p)
     finally:
         source.unlink(missing_ok=True)
     return destination
@@ -172,39 +186,62 @@ def summarise(
     return lines
 
 
+def resolve_listing(page: Any, args: argparse.Namespace) -> str | None:
+    """The advert text: read off the page, or from a file when one is given."""
+    if args.listing:
+        print(f"Reading the listing from {args.listing}")
+        return Path(args.listing).read_text()
+
+    text = extract_listing_text(page)
+    if looks_usable(text):
+        print(f"Read the job description off the page ({len(text.split())} words).")
+        return text
+
+    print("Could not find a job description on this page — only found "
+          f"{len(text.split())} words.")
+    print("Some sites (LinkedIn) block scraping. Paste the advert into a file and")
+    print("re-run with --listing listing.txt.")
+    return None
+
+
 def run(args: argparse.Namespace) -> int:
-    listing = Path(args.listing).read_text()
     bank = load_bank()
-
-    if args.cv:
-        cv = json.loads(Path(args.cv).read_text())
-        print(f"Using cached CV from {args.cv}")
-    else:
-        print("Tailoring the CV for this listing…")
-        result = tailor_cv(listing, args.hint, bank=bank)
-        cv = result.cv
-        check = result.report
-        print(
-            f"  roles: {', '.join(cv['selected_roles'])} | "
-            f"rewrite verified: {check.ok} (longest shared run {check.max_run})"
-        )
-        if not check.ok:
-            print("  warning: the rewrite check did not fully pass — review before submitting.")
-        Path(args.save_cv).write_text(json.dumps(cv, indent=2))
-        print(f"  saved CV JSON to {args.save_cv}")
-
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    cv_pdf = write_cv_pdf(render_cv_page(cv, bank), out_dir / "cv.pdf")
-    print(f"Rendered {cv_pdf}")
 
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = launch_chromium(p, headless=args.headless)
         page = browser.new_page()
+        print(f"Opening {args.url}")
         page.goto(args.url, wait_until="domcontentloaded")
         page.wait_for_timeout(2500)  # ATS forms hydrate after load
+
+        listing = resolve_listing(page, args)
+        if listing is None:
+            browser.close()
+            return 1
+
+        if args.cv:
+            cv = json.loads(Path(args.cv).read_text())
+            print(f"Using cached CV from {args.cv}")
+        else:
+            print("Tailoring the CV for this listing…")
+            result = tailor_cv(listing, args.hint, bank=bank)
+            cv = result.cv
+            check = result.report
+            print(
+                f"  roles: {', '.join(cv['selected_roles'])} | "
+                f"rewrite verified: {check.ok} (longest shared run {check.max_run})"
+            )
+            if not check.ok:
+                print("  warning: the rewrite check did not fully pass — review before submitting.")
+            Path(args.save_cv).write_text(json.dumps(cv, indent=2))
+            print(f"  saved CV JSON to {args.save_cv}")
+
+        cv_pdf = write_cv_pdf(render_cv_page(cv, bank), out_dir / "cv.pdf", playwright=p)
+        print(f"Rendered {cv_pdf}")
 
         scraped = extract_fields(page)
         if not scraped:
@@ -312,9 +349,13 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Fill a job application from the tailored CV.")
-    parser.add_argument("--url", required=True, help="Application form URL (Greenhouse, Lever, …)")
-    parser.add_argument("--listing", required=True, help="File containing the pasted job listing")
+    parser = argparse.ArgumentParser(
+        description="Point this at a job posting URL; it tailors the CV and fills the form.",
+        epilog="Example: python -m cvagent.apply.runner https://job-boards.greenhouse.io/acme/jobs/123")
+    parser.add_argument("url", help="The job posting URL — that is all you need")
+    parser.add_argument("--listing",
+                        help="File with the advert text. Only needed when the page hides it "
+                             "from scrapers (LinkedIn); otherwise it is read off the page.")
     parser.add_argument("--hint", default="auto", choices=["auto", "finance", "tech", "hybrid"])
     parser.add_argument("--cv", help="Reuse a previously generated CV JSON instead of tailoring again")
     parser.add_argument("--save-cv", default="tailored_cv.json")
