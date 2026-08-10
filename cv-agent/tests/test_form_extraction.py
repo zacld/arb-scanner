@@ -88,8 +88,9 @@ def test_end_to_end_mapping_leaves_only_judgement_calls(fields):
     assert matched[fields["first_name"].key].value == "Zac"
     assert matched[fields["email"].key].value == "zacldevine@gmail.com"
     assert matched[fields["resume"].key].action == "upload_cv"
-    # Phone is empty in the bank: flagged, never faked.
-    assert matched[fields["phone"].key].action == "skip"
+    assert matched[fields["phone"].key].value == "07867860977"
+    # The privacy consent is Zac's to give — never the agent's.
+    assert matched[fields["privacy"].key].action == "skip"
 
     # Only the genuinely ambiguous fields should cost a model call.
-    assert {f.id for f in remaining} == {"q_why", "q_auth", "privacy"}
+    assert {f.id for f in remaining} == {"q_why", "q_auth"}

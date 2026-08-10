@@ -65,3 +65,22 @@ DETERMINISTIC_RULES: list[tuple[str, str]] = [
     (r"\bschool\b|\buniversity\b|\bcollege\b", "school"),
     (r"\bdegree\b|\bqualification\b", "degree"),
 ]
+
+# Questions the agent must never answer on Zac's behalf, whatever the wording.
+# These are matched before the classifier ever sees the field, so no model call
+# is spent on them and no model can decide to fill one in.
+NEVER_ANSWER_PATTERNS: list[tuple[str, str]] = [
+    (r"\bgender\b|\bsex\b|\bpronoun", "a gender/identity question"),
+    (r"\brace\b|\bethnic|\bhispanic\b|\blatino\b", "an ethnicity question"),
+    (r"\bveteran\b|\bmilitary\b", "a veteran-status question"),
+    (r"\bdisab|\bimpairment\b", "a disability question"),
+    (r"self[\s-]*identif", "a voluntary self-identification question"),
+    (r"sexual\s+orientation|\btransgender\b|\blgbt", "an orientation question"),
+    (r"\bage\b|date\s+of\s+birth|\bdob\b", "an age question"),
+    (r"\bsalary\b|compensation\s+expect|expected\s+pay|desired\s+pay", "a pay-expectation question"),
+    (r"notice\s+period|when\s+can\s+you\s+start|availability\s+to\s+start", "a notice-period question"),
+    (r"\bsponsorship\b|\bvisa\b|work\s+permit|immigration", "a visa/sponsorship question"),
+    (r"\bcriminal\b|\bconvict|background\s+check", "a criminal-record question"),
+    (r"privacy\s+(notice|policy)|\bconsent\b|terms\s+and\s+conditions|\bgdpr\b",
+     "a legal consent — Zac's to give, not the agent's"),
+]

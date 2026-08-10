@@ -25,7 +25,7 @@ from ..bank import load_bank
 from ..render import render_cv_page
 from ..tailor import tailor_cv
 from .browser import launch_chromium
-from .forms import FormField, extract_fields
+from .forms import FormField, application_form_fields, extract_fields, read_values
 from .mapper import Assignment, map_form
 from .profile import build_profile
 
@@ -56,6 +56,31 @@ def write_cv_pdf(html: str, destination: Path) -> Path:
     return destination
 
 
+def _fill_combobox(frame: Any, locator: Any, value: str) -> str:
+    """Type into a typeahead and commit a suggestion from its popup.
+
+    A plain value write leaves these fields looking filled while the form still
+    considers them empty, so the application fails validation on submit with no
+    obvious cause. Type, wait for the popup, take the first option.
+    """
+    locator.click()
+    locator.fill("")
+    try:
+        locator.press_sequentially(value, delay=40)
+    except AttributeError:  # older Playwright
+        locator.type(value, delay=40)
+    frame.wait_for_timeout(900)
+
+    for selector in ("[role=option]", "li[id*=option]", ".select__option"):
+        options = frame.locator(selector)
+        if options.count():
+            options.first.click()
+            return f"picked {value!r} from the suggestion list"
+
+    locator.press("Enter")
+    return f"typed {value!r} — NO SUGGESTION LIST, verify it registered"
+
+
 def apply_assignment(page: Any, field: FormField, assignment: Assignment, cv_pdf: Path) -> str:
     """Put one value on the page. Returns a short status for the review summary."""
     frame = page.frames[field.frame_index]
@@ -64,6 +89,8 @@ def apply_assignment(page: Any, field: FormField, assignment: Assignment, cv_pdf
         if assignment.action == "skip":
             return "skipped"
         if assignment.action == "upload_cv":
+            # Deliberately no visibility wait: the real file input is hidden
+            # behind a styled "Attach" button on every modern ATS.
             locator.set_input_files(str(cv_pdf))
             return f"uploaded {cv_pdf.name}"
         if assignment.action == "select":
@@ -72,10 +99,35 @@ def apply_assignment(page: Any, field: FormField, assignment: Assignment, cv_pdf
             else:  # radio group or checkbox rendered as an option
                 locator.check()
             return f"selected {assignment.value!r}"
+        if field.combobox:
+            return _fill_combobox(frame, locator, assignment.value)
         locator.fill(assignment.value)
         return f"filled {len(assignment.value)} chars"
     except Exception as exc:
         return f"FAILED ({type(exc).__name__}: {exc})"
+
+
+def verify_fills(
+    fields: dict[str, FormField],
+    assignments: dict[str, Assignment],
+    values: dict[str, str],
+) -> list[str]:
+    """Compare what we meant to write against what the page actually holds."""
+    problems = []
+    for key, assignment in assignments.items():
+        field = fields.get(key)
+        if field is None:
+            continue
+        actual = values.get(key, "")
+        if assignment.action == "upload_cv" and not actual:
+            problems.append(f"{field.label[:48]}: CV upload did not attach")
+        elif assignment.action == "fill" and assignment.value and not actual:
+            problems.append(f"{field.label[:48]}: typed value did not stick (field reads empty)")
+        elif assignment.action == "select" and assignment.value and not actual:
+            problems.append(f"{field.label[:48]}: no option ended up selected")
+        elif assignment.action == "skip" and field.required and not actual:
+            problems.append(f"{field.label[:48]}: REQUIRED but left blank")
+    return problems
 
 
 def summarise(
@@ -126,22 +178,36 @@ def run(args: argparse.Namespace) -> int:
         page.goto(args.url, wait_until="domcontentloaded")
         page.wait_for_timeout(2500)  # ATS forms hydrate after load
 
-        fields = extract_fields(page)
-        if not fields:
+        scraped = extract_fields(page)
+        if not scraped:
             print("No form fields found. Is this the application page rather than the ad?")
             browser.close()
             return 1
-        print(f"Found {len(fields)} fields; mapping…")
 
-        profile = build_profile(bank, cv)
-        assignments = map_form(fields, profile, cv, listing)
+        fields, off_form = application_form_fields(scraped)
+        print(f"Found {len(scraped)} fields; {len(fields)} belong to the application form.")
+        if off_form:
+            print("  ignoring fields from other forms on the page "
+                  f"({', '.join(sorted({f.label[:28] for f in off_form}))})")
 
         by_key = {f.key: f for f in fields}
+        if args.dump_fields:
+            (out_dir / "fields.json").write_text(
+                json.dumps([{**asdict(f), "key": f.key} for f in fields], indent=2)
+            )
+            print(f"  wrote {out_dir / 'fields.json'}")
+
+        profile = build_profile(bank, cv)
+        assignments = map_form(fields, profile, cv, listing, use_llm=not args.no_llm)
+
         statuses = {
             key: apply_assignment(page, by_key[key], assignment, cv_pdf)
             for key, assignment in assignments.items()
             if key in by_key
         }
+
+        page.wait_for_timeout(600)  # let any client-side validation settle
+        problems = verify_fills(by_key, assignments, read_values(page))
 
         shot = out_dir / "filled_form.png"
         page.screenshot(path=str(shot), full_page=True)
@@ -152,9 +218,19 @@ def run(args: argparse.Namespace) -> int:
         print("\nForm filled — review before anything is sent:\n")
         print("\n".join(summarise(by_key, assignments, statuses)))
         flagged = [a for a in assignments.values() if a.needs_review]
-        failed = [k for k, s in statuses.items() if s.startswith("FAILED")]
+        # A typeahead that never offered a suggestion looks filled but usually
+        # is not, so it counts as a failure for the submit gate.
+        failed = [
+            k for k, s in statuses.items()
+            if s.startswith("FAILED") or "NO SUGGESTION" in s
+        ]
         print(f"\nScreenshot: {shot}")
         print(f"{len(flagged)} field(s) flagged for review, {len(failed)} fill failure(s).")
+
+        if problems:
+            print("\nRead-back check — the page does not hold what we wrote:")
+            for problem in problems:
+                print(f"  ! {problem}")
 
         if not args.submit:
             print("\nNot submitting (default). The browser stays open — finish by hand,")
@@ -164,8 +240,9 @@ def run(args: argparse.Namespace) -> int:
             browser.close()
             return 0
 
-        if flagged and not args.force:
-            print("\nRefusing to submit while fields are flagged. Fix them or pass --force.")
+        if (flagged or problems or failed) and not args.force:
+            print("\nRefusing to submit: fields are flagged, failed to fill, or did not read")
+            print("back correctly. Fix them in the open browser, or pass --force.")
             browser.close()
             return 2
 
@@ -199,6 +276,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--save-cv", default="tailored_cv.json")
     parser.add_argument("--out", default="application_run", help="Directory for PDF/screenshots")
     parser.add_argument("--headless", action="store_true", help="Run without a visible browser")
+    parser.add_argument("--no-llm", action="store_true",
+                        help="Skip the classifier: scrape and fill only the deterministic fields. "
+                             "Use to debug a new employer's form with no API key and no spend.")
+    parser.add_argument("--dump-fields", action="store_true",
+                        help="Write the scraped field descriptors to fields.json for debugging")
     parser.add_argument("--submit", action="store_true", help="Allow submission after confirmation")
     parser.add_argument("--force", action="store_true", help="Submit even with flagged fields")
     return run(parser.parse_args(argv))

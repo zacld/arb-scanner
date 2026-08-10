@@ -52,11 +52,27 @@ python -m cvagent.apply.runner --url <application URL> --listing listing.txt
 
 Tailors the CV, renders it to PDF, opens the form in Chromium, maps every field
 (regex for the standard contact fields, Claude for everything else), fills it,
-screenshots it, and **stops**. Nothing is submitted unless you pass `--submit` and
-then type `submit` at the prompt — and flagged fields block submission entirely
+reads every value back out of the page, screenshots it, and **stops**. Nothing is
+submitted unless you pass `--submit` and then type `submit` at the prompt — and a
+flagged field, a fill failure or a read-back mismatch blocks submission entirely
 unless you also pass `--force`.
 
-Design notes and the build order for other ATS vendors: `docs/stage2-approach.md`.
+Useful flags when a new employer's form misbehaves:
+
+| Flag | Why |
+|---|---|
+| `--no-llm` | Scrape and fill only the deterministic fields. No API key, no spend — the fastest way to see whether a new form scrapes correctly. |
+| `--dump-fields` | Write every scraped field descriptor to `fields.json`. |
+| `--cv tailored_cv.json` | Reuse a CV you already generated instead of tailoring again. |
+
+The agent will never answer for you: gender, ethnicity, veteran status,
+disability, self-identification, age, salary expectations, notice period,
+visa/sponsorship, criminal-record questions, or legal consent checkboxes. Those
+are matched before the classifier runs, so no model ever sees a chance to fill
+one in.
+
+Design notes, the Greenhouse hardening log, and what a second ATS would need:
+`docs/stage2-approach.md`.
 
 ## Layout
 

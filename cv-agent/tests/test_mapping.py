@@ -35,7 +35,7 @@ def profile(bank):
 
 
 def field(key, label, kind="text", **kwargs):
-    return FormField(key=key, kind=kind, text=[label], **kwargs)
+    return FormField(stamp=key, kind=kind, text=[label], **kwargs)
 
 
 def test_standard_contact_fields_resolve_without_a_model_call(profile):
@@ -47,39 +47,51 @@ def test_standard_contact_fields_resolve_without_a_model_call(profile):
     ]
     matched, remaining = deterministic_pass(fields, profile)
     assert remaining == []
-    assert matched["f0"].value == "Zac"
-    assert matched["f1"].value == "Devine"
-    assert matched["f2"].value == "zacldevine@gmail.com"
-    assert matched["f3"].action == "upload_cv"
+    assert matched["0-f0"].value == "Zac"
+    assert matched["0-f1"].value == "Devine"
+    assert matched["0-f2"].value == "zacldevine@gmail.com"
+    assert matched["0-f3"].action == "upload_cv"
 
 
 def test_missing_profile_value_is_flagged_not_faked(profile):
+    """A rule that matches but has no value behind it must flag, never fill blank."""
+    stripped = {**profile, "website": ""}
+    key = field("f0", "Personal website").key
+    matched, _ = deterministic_pass([field("f0", "Personal website")], stripped)
+    assert matched[key].action == "skip"
+    assert matched[key].needs_review
+
+
+def test_phone_now_fills_from_the_bank(profile):
+    key = field("f0", "Phone", kind="tel").key
     matched, _ = deterministic_pass([field("f0", "Phone", kind="tel")], profile)
-    assert matched["f0"].action == "skip"
-    assert matched["f0"].needs_review
+    assert matched[key].value == "07867860977"
 
 
 def test_unfamiliar_and_option_fields_go_to_the_classifier(profile):
     fields = [
         field("f0", "Why do you want to work here?", kind="textarea"),
-        FormField(key="f1", kind="select", text=["Country"],
+        FormField(stamp="f1", kind="select", text=["Country"],
                   options=[{"value": "uk", "label": "United Kingdom"}]),
         field("f2", "I accept the privacy policy", kind="checkbox"),
     ]
-    _, remaining = deterministic_pass(fields, profile)
-    assert {f.key for f in remaining} == {"f0", "f1", "f2"}
+    matched, remaining = deterministic_pass(fields, profile)
+    # The open question and the country dropdown need judgement; the privacy
+    # consent is reserved for Zac and never reaches the classifier at all.
+    assert {f.key for f in remaining} == {"0-f0", "0-f1"}
+    assert matched["0-f2"].action == "skip"
 
 
 def test_label_prefers_the_question_over_the_surrounding_block():
     noisy = FormField(
-        key="f0", kind="textarea",
+        stamp="f0", kind="textarea",
         text=["Why this role?", "Why this role? " + "Long surrounding container text. " * 20],
     )
     assert noisy.label == "Why this role?"
 
 
 def test_prompt_view_truncates_context_and_lists_options():
-    f = FormField(key="f0", kind="select", text=["Location"] ,
+    f = FormField(stamp="f0", kind="select", text=["Location"] ,
                   options=[{"value": "a", "label": "London"}, {"value": "b", "label": "Remote"}])
     view = f.prompt_view()
     assert view["options"] == ["London", "Remote"]

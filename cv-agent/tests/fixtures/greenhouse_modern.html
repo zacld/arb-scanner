@@ -1,0 +1,176 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Account Executive — Northwind Software</title></head>
+<body>
+<!--
+  Modelled on the job-boards.greenhouse.io form: React-rendered, labels carry the
+  required marker in a nested span, the real file input is hidden behind an
+  "Attach" button, Location is a typeahead combobox, custom questions are
+  id="question_<id>", and the EEO block sits in its own section with bland
+  "Please select" labels.
+-->
+<main>
+  <h1>Account Executive, SaaS Platform</h1>
+  <form id="application-form">
+
+    <div class="field">
+      <label for="first_name">First Name<span class="required">*</span></label>
+      <input id="first_name" name="first_name" type="text" required autocomplete="given-name">
+    </div>
+    <div class="field">
+      <label for="last_name">Last Name<span class="required">*</span></label>
+      <input id="last_name" name="last_name" type="text" required autocomplete="family-name">
+    </div>
+    <div class="field">
+      <label for="email">Email<span class="required">*</span></label>
+      <input id="email" name="email" type="email" required autocomplete="email">
+    </div>
+    <div class="field">
+      <label for="phone">Phone<span class="required">*</span></label>
+      <input id="phone" name="phone" type="tel" required autocomplete="tel">
+    </div>
+
+    <div class="field">
+      <label for="candidate-location">Location (City)<span class="required">*</span></label>
+      <input id="candidate-location" name="candidate_location" type="text" required
+             role="combobox" aria-autocomplete="list" aria-controls="location-listbox"
+             aria-expanded="false" autocomplete="off">
+      <ul id="location-listbox" role="listbox" hidden></ul>
+    </div>
+
+    <div class="field">
+      <label for="resume">Resume/CV<span class="required">*</span></label>
+      <div class="attach-row">
+        <button type="button" id="attach-resume">Attach</button>
+        <span>, </span><button type="button">Dropbox</button>
+        <span>, or </span><button type="button">Google Drive</button>
+      </div>
+      <!-- The real control. Hidden, as on every live Greenhouse form. -->
+      <input id="resume" name="resume" type="file" required
+             style="display:none" accept=".pdf,.doc,.docx,.txt,.rtf">
+    </div>
+
+    <div class="field">
+      <label for="cover_letter">Cover Letter</label>
+      <div class="attach-row"><button type="button">Attach</button></div>
+      <input id="cover_letter" name="cover_letter" type="file" style="display:none">
+    </div>
+
+    <div class="field">
+      <label for="question_30538425">LinkedIn Profile</label>
+      <input id="question_30538425" name="question_30538425" type="url">
+    </div>
+
+    <div class="field">
+      <label for="question_30538426">Why do you want to work at Northwind?<span class="required">*</span></label>
+      <textarea id="question_30538426" name="question_30538426" required maxlength="2000"></textarea>
+    </div>
+
+    <div class="field">
+      <label for="question_30538427">Are you legally authorised to work in the UK?<span class="required">*</span></label>
+      <select id="question_30538427" name="question_30538427" required>
+        <option value="">Please select</option>
+        <option value="1">Yes</option>
+        <option value="0">No</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="question_30538428">Will you now or in the future require visa sponsorship?<span class="required">*</span></label>
+      <select id="question_30538428" name="question_30538428" required>
+        <option value="">Please select</option>
+        <option value="1">Yes</option>
+        <option value="0">No</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="question_30538429">What are your salary expectations?</label>
+      <input id="question_30538429" name="question_30538429" type="text">
+    </div>
+
+    <section id="demographic-questions">
+      <h3>Voluntary Self-Identification</h3>
+      <p>
+        Northwind invites applicants to self-identify. Completion is entirely voluntary
+        and your responses will not be considered in the hiring process.
+      </p>
+      <div class="field">
+        <label for="gender">Gender</label>
+        <select id="gender" name="demographic[gender]">
+          <option value="">Please select</option>
+          <option>Male</option><option>Female</option>
+          <option>I don't wish to answer</option>
+        </select>
+      </div>
+      <div class="field">
+        <!-- Bland label; the disclosure lives in the section copy above. -->
+        <label for="demo_ethnicity">Please select</label>
+        <select id="demo_ethnicity" name="demographic[race]">
+          <option value="">Please select</option>
+          <option>Asian</option><option>Black or African descent</option>
+          <option>White</option><option>I don't wish to answer</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="veteran_status">Veteran Status</label>
+        <select id="veteran_status" name="demographic[veteran]">
+          <option value="">Please select</option>
+          <option>I am a veteran</option><option>I am not a veteran</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="disability_status">Disability Status</label>
+        <select id="disability_status" name="demographic[disability]">
+          <option value="">Please select</option>
+          <option>Yes</option><option>No</option>
+          <option>I don't wish to answer</option>
+        </select>
+      </div>
+    </section>
+
+    <div class="field">
+      <label><input type="checkbox" id="gdpr_consent" name="gdpr_consent" required>
+        I consent to Northwind storing my data in line with the privacy notice</label>
+    </div>
+
+    <input type="hidden" name="authenticity_token" value="not-a-field">
+    <div style="position:absolute;left:-9999px">
+      <label for="hp_email">Do not fill this in</label>
+      <input id="hp_email" name="hp_email" type="text">
+    </div>
+
+    <button type="submit" id="submit_app">Submit application</button>
+  </form>
+</main>
+
+<script>
+  // Typeahead: suggestions only appear after typing, and the field is only
+  // considered valid once a suggestion is committed — the behaviour that makes
+  // a plain value write silently insufficient on the real form.
+  const input = document.getElementById('candidate-location');
+  const listbox = document.getElementById('location-listbox');
+  const CITIES = ['London, UK', 'London, ON, Canada', 'Manchester, UK', 'Bristol, UK'];
+  input.dataset.committed = 'false';
+  input.addEventListener('input', () => {
+    const term = input.value.trim().toLowerCase();
+    listbox.innerHTML = '';
+    input.dataset.committed = 'false';
+    if (!term) { listbox.hidden = true; return; }
+    for (const city of CITIES.filter((c) => c.toLowerCase().includes(term))) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'option');
+      li.textContent = city;
+      li.addEventListener('click', () => {
+        input.value = city;
+        input.dataset.committed = 'true';
+        listbox.hidden = true;
+        listbox.innerHTML = '';
+      });
+      listbox.append(li);
+    }
+    listbox.hidden = listbox.children.length === 0;
+  });
+</script>
+</body>
+</html>

@@ -19,7 +19,7 @@ from typing import Any
 import anthropic
 
 from .forms import FormField
-from .profile import DETERMINISTIC_RULES
+from .profile import DETERMINISTIC_RULES, NEVER_ANSWER_PATTERNS
 
 MODEL = os.environ.get("CV_AGENT_MODEL", "claude-opus-5")
 
@@ -97,6 +97,20 @@ def _haystack(field: FormField) -> str:
     return " ".join([field.label, field.name, field.id]).lower()
 
 
+def _never_answer(field: FormField) -> str | None:
+    """Whether this field is one only Zac may answer. Checks the full question text.
+
+    Matched against every descriptive string, not just the shortest label: a
+    Greenhouse EEO block often carries the disclosure in the surrounding copy and
+    labels the control something bland like "Please select".
+    """
+    haystack = " ".join([*field.text, field.name, field.id]).lower()
+    for pattern, description in NEVER_ANSWER_PATTERNS:
+        if re.search(pattern, haystack):
+            return description
+    return None
+
+
 def _is_cv_upload(field: FormField) -> bool:
     if field.kind != "file":
         return False
@@ -111,6 +125,18 @@ def deterministic_pass(
     remaining: list[FormField] = []
 
     for field in fields:
+        # Checked first, ahead of everything: no model call, no chance of an
+        # answer. A CV upload is exempt — "disability" in an employer's boilerplate
+        # must not stop the resume attaching.
+        if not _is_cv_upload(field):
+            reserved = _never_answer(field)
+            if reserved:
+                matched[field.key] = Assignment(
+                    field.key, "skip", "", "none", "low",
+                    f"Left for Zac: {reserved}.",
+                )
+                continue
+
         if _is_cv_upload(field):
             matched[field.key] = Assignment(field.key, "upload_cv", source="generated_pdf")
             continue
@@ -220,7 +246,18 @@ def map_form(
     listing: str,
     *,
     client: anthropic.Anthropic | None = None,
+    use_llm: bool = True,
 ) -> dict[str, Assignment]:
+    """Map every field. With use_llm=False the judgement fields are flagged rather
+    than answered — lets the scraper be exercised against a real posting with no
+    API key and no spend, which is how you debug a new employer's form."""
     matched, remaining = deterministic_pass(fields, profile)
-    matched.update(classify_fields(remaining, profile, cv, listing, client=client))
+    if use_llm:
+        matched.update(classify_fields(remaining, profile, cv, listing, client=client))
+    else:
+        for field in remaining:
+            matched.setdefault(field.key, Assignment(
+                field.key, "skip", "", "none", "low",
+                "Needs the classifier (running with --no-llm).",
+            ))
     return matched

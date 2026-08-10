@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Careers — Harborline Capital</title></head>
+<body>
+<!--
+  A company careers page that embeds the Greenhouse board in an iframe, the way
+  boards.greenhouse.io/embed is normally deployed. The host page has its own
+  unrelated form (a newsletter signup) — a scraper that grabs the first form it
+  sees, or only scans the top frame, gets this wrong.
+-->
+<header>
+  <h1>Harborline Capital Markets — Careers</h1>
+  <form id="newsletter">
+    <label for="nl_email">Subscribe to job alerts</label>
+    <input type="email" id="nl_email" name="newsletter_email">
+    <button type="submit">Subscribe</button>
+  </form>
+</header>
+
+<h2>Corporate FX Sales Associate</h2>
+<div id="grnhse_app">
+  <iframe id="grnhse_iframe" src="./greenhouse_embed_inner.html"
+          width="100%" height="1200" frameborder="0" allowtransparency="true"></iframe>
+</div>
+</body>
+</html>
