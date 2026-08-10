@@ -1,0 +1,119 @@
+{
+  "identity": {
+    "name": "Zac Devine",
+    "email": "zacldevine@gmail.com",
+    "phone": "",
+    "linkedin": "",
+    "website": "",
+    "location": "London, UK",
+    "city": "London",
+    "country": "United Kingdom",
+    "work_authorisation": "Right to work in the UK",
+    "headline": "Business Development / B2B Sales"
+  },
+  "always_included": {
+    "id": "universal_partners",
+    "title": "Business Development Executive",
+    "company": "Universal Partners",
+    "start": "May 2026",
+    "end": "Present",
+    "duration": "4 mos",
+    "location": "London Area, On-site",
+    "bullets": [
+      "Business development within the FX and international payments space, working with businesses to support their foreign exchange requirements and cross-border transactions.",
+      "Focused on outbound business development, client relationships, market awareness, and developing a strong understanding of global FX markets."
+    ]
+  },
+  "pool": [
+    {
+      "id": "dojo",
+      "title": "Fintech & Payment Consultant",
+      "company": "Dojo",
+      "start": "Dec 2025",
+      "end": "May 2026",
+      "duration": "6 mos",
+      "location": "",
+      "bullets": [
+        "Partnered with business owners to optimise payment systems, improving efficiency and cash flow.",
+        "Identified and implemented process improvements that reduced costs and operational friction.",
+        "Translated complex technical solutions into clear commercial value, supporting faster decision-making.",
+        "Delivered secure, reliable payment solutions aligned to real-world trading environments.",
+        "Maintained 100+ outbound calls daily, consistently generating pipeline and driving deal flow."
+      ]
+    },
+    {
+      "id": "leadsparker",
+      "title": "Account Executive",
+      "company": "LeadSparker",
+      "start": "Aug 2025",
+      "end": "Dec 2025",
+      "duration": "5 mos",
+      "location": "London Area",
+      "bullets": [
+        "Joined a fast-growing startup to focus on high-ticket B2B sales, managing deals end-to-end from initial engagement through to close.",
+        "Handled £10k–£50k+ opportunities across inbound and self-generated pipeline in a high-velocity environment with 5–10+ qualified calls daily.",
+        "Specialised in short-cycle sales (1–2 call closes) using structured discovery, objection handling, and strong deal control.",
+        "Worked closely with founders and senior decision-makers, building trust and progressing opportunities efficiently."
+      ]
+    },
+    {
+      "id": "groteam",
+      "title": "IT & Digital Solutions Associate",
+      "company": "GRO.TEAM The Business Growth Agency",
+      "start": "Mar 2021",
+      "end": "Jun 2022",
+      "duration": "1 yr 4 mos",
+      "location": "Gerrards Cross, Hybrid",
+      "bullets": [
+        "Partnered with B2B SMEs to assess digital needs and design comprehensive solutions, including CRM rollouts (HubSpot, Salesforce) and website redesigns.",
+        "Delivered technical demonstrations and product training, empowering clients to enhance lead generation and customer engagement.",
+        "Managed project lifecycles by scoping requirements and coordinating developers and designers for timely, budget-conscious delivery.",
+        "Provided Tier-2 IT support for cloud services, integrations, and data migration, ensuring seamless operations for clients."
+      ]
+    }
+  ],
+  "full_history_not_tailored": [
+    {
+      "title": "Sales Associate",
+      "company": "L'Oréal",
+      "start": "Dec 2024",
+      "end": "Jul 2025",
+      "duration": "8 mos",
+      "location": "City of Bristol"
+    },
+    {
+      "title": "Co-Founder",
+      "company": "Odd Jobs",
+      "start": "Jan 2020",
+      "end": "Feb 2021",
+      "duration": "1 yr 2 mos",
+      "location": "Beaconsfield"
+    },
+    {
+      "title": "Events Waiter",
+      "company": "Monkton Barn",
+      "start": "Apr 2019",
+      "end": "Sep 2019",
+      "duration": "6 mos",
+      "location": ""
+    }
+  ],
+  "education": [
+    {
+      "qualification": "BSc (Hons) Information Technology Management for Business",
+      "institution": "University of the West of England",
+      "start": "Sep 2022",
+      "end": "Jul 2025",
+      "grade": "2:1",
+      "detail": "Dissertation (67): \"Leveraging Artificial Intelligence for Real-Time Threat Detection and Automated Response in Cybersecurity: A Strategic Framework for UK SMEs\""
+    },
+    {
+      "qualification": "A Levels — Information Technology, Business, Criminology",
+      "institution": "Shiplake College",
+      "start": "Sep 2020",
+      "end": "Jul 2022",
+      "grade": "A, A, B",
+      "detail": ""
+    }
+  ]
+}

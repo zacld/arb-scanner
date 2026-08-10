@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CV Tailoring Agent — Zac Devine</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="layout">
+    <section class="controls">
+      <header>
+        <h1>CV Tailoring Agent</h1>
+        <p class="sub">Paste a job listing. LinkedIn blocks scraping, so the text has to come in by hand.</p>
+      </header>
+
+      <label for="listing">Job listing</label>
+      <textarea id="listing" rows="16" placeholder="Paste the full listing: title, company, responsibilities, requirements…"></textarea>
+
+      <label for="hint">Category hint</label>
+      <select id="hint">
+        <option value="auto">Let the agent decide</option>
+        <option value="finance">Finance</option>
+        <option value="tech">Tech</option>
+        <option value="hybrid">Hybrid</option>
+      </select>
+
+      <button id="generate">Generate tailored CV</button>
+      <p id="status" class="status"></p>
+
+      <div id="analysis" class="analysis hidden">
+        <h2>What the agent did</h2>
+        <p id="read"></p>
+        <p id="reasoning"></p>
+        <div id="keywords" class="keywords"></div>
+        <div id="verification" class="verify"></div>
+      </div>
+    </section>
+
+    <section class="preview">
+      <div class="preview-bar">
+        <span id="preview-label">Preview</span>
+        <button id="print" disabled>Print / Save as PDF</button>
+      </div>
+      <div id="cv" class="cv-frame">
+        <p class="placeholder">The tailored CV appears here.</p>
+      </div>
+    </section>
+  </main>
+  <script src="./app.js"></script>
+</body>
+</html>

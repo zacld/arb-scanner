@@ -1,0 +1,8 @@
+anthropic>=0.121
+
+# Stage 2 only — browser automation for application forms.
+# After installing, also run: playwright install chromium
+playwright>=1.40
+
+# dev
+pytest>=8.0

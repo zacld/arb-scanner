@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Apply — Northwind Software</title></head>
+<body>
+  <h1>Apply for Account Executive, SaaS Platform</h1>
+  <form id="application_form">
+    <div class="field">
+      <label for="first_name">First Name <span class="req">*</span></label>
+      <input type="text" id="first_name" name="job_application[first_name]" required>
+    </div>
+    <div class="field">
+      <label for="last_name">Last Name <span class="req">*</span></label>
+      <input type="text" id="last_name" name="job_application[last_name]" required>
+    </div>
+    <div class="field">
+      <label for="email">Email <span class="req">*</span></label>
+      <input type="email" id="email" name="job_application[email]" required>
+    </div>
+    <div class="field">
+      <label for="phone">Phone</label>
+      <input type="tel" id="phone" name="job_application[phone]">
+    </div>
+    <div class="field">
+      <label for="resume">Resume/CV <span class="req">*</span></label>
+      <input type="file" id="resume" name="job_application[resume]" required>
+    </div>
+    <div class="field">
+      <label for="linkedin">LinkedIn Profile</label>
+      <input type="url" id="linkedin" name="job_application[urls][LinkedIn]">
+    </div>
+    <div class="field">
+      <label for="q_why">Why do you want to work at Northwind?</label>
+      <textarea id="q_why" name="job_application[answers][0]" maxlength="1200"></textarea>
+    </div>
+    <div class="field">
+      <!-- No <label for>; the question lives in a sibling div, as several ATS render it -->
+      <div class="question-text">Are you legally authorised to work in the United Kingdom?</div>
+      <select id="q_auth" name="job_application[answers][1]">
+        <option value="">Please select</option>
+        <option value="1">Yes</option>
+        <option value="0">No</option>
+      </select>
+    </div>
+    <div class="field">
+      <label><input type="checkbox" id="privacy" name="consent"> I have read the privacy notice</label>
+    </div>
+    <input type="hidden" name="authenticity_token" value="should-not-be-scraped">
+    <div style="display:none">
+      <label for="honeypot">Leave blank</label>
+      <input type="text" id="honeypot" name="honeypot">
+    </div>
+    <button type="submit">Submit application</button>
+  </form>
+</body>
+</html>
