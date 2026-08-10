@@ -21,3 +21,4 @@ __pycache__/
 # cv-agent run artifacts
 cv-agent/application_run/
 cv-agent/tailored_cv.json
+cv-agent/scrape_report/

@@ -93,8 +93,27 @@ LeadSparker / GRO.TEAM chosen per listing on genuine relevance; the third droppe
 entirely; education untouched. `cvagent/verify.py` enforces all of these in code, so a
 model that ignores them fails the check rather than reaching the PDF.
 
+## Live validation
+
+The test suite runs entirely offline, so a few things can only be confirmed on a
+machine with a key and network access. In ascending order of risk:
+
+```bash
+python scripts/live_check.py --step classifier   # real model, local form, no employer
+python scripts/scrape_report.py --url <posting>  # real posting, no key, sends nothing
+python scripts/live_check.py --step tailoring    # Stage 1 wording check
+```
+
+The classifier step prints every generated answer verbatim before anything
+downstream happens. `scrape_report.py` checks a real posting against every
+assumption the fixtures encode and prints PASS/FAIL per assumption.
+
+Only after those are clean is a real submission worth attempting — see
+`docs/stage2-approach.md` for why the first one should be an application Zac
+actually wants rather than a throwaway test.
+
 ## Tests
 
 ```bash
-python -m pytest tests -q     # runs offline, no API key needed
+python -m pytest tests -q     # 65 tests, all offline, no API key needed
 ```

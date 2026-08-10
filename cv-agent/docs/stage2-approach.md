@@ -127,18 +127,59 @@ the vendor — the vendor-specific part is entirely in the runner's flow control
 
 ## Live checklist for Zac
 
-Nothing below can be run from the build environment — it has no outbound network
+Nothing below can run in the build environment — it has no outbound network
 access and no API key — so these are the checks that have to happen on a real
-machine against a real posting.
+machine. Each is a single command, in ascending order of risk.
 
-1. `export ANTHROPIC_API_KEY=...` and `playwright install chromium`.
-2. Scrape-only, no spend, on a real Greenhouse posting:
-   `python -m cvagent.apply.runner --url <posting> --listing listing.txt --cv tailored_cv.json --no-llm --dump-fields`
-   Check `fields.json`: every question present, the resume input found, nothing
-   from an unrelated form.
-3. Full run with the classifier, still not submitting. Read the free-text answer
-   it wrote before anything else.
-4. Only then `--submit`, and read the summary before typing `submit`.
+**1 — classifier (needs a key, costs pennies, touches no employer).**
+
+```bash
+python scripts/live_check.py --step classifier
+```
+
+Runs the classifier against the local Greenhouse fixture and prints every
+generated answer verbatim before anything else happens. Read them: no invented
+facts, no claimed familiarity with products Zac hasn't used, no flattery.
+
+**2 — real posting scrape (needs network, costs nothing, sends nothing).**
+
+```bash
+python scripts/scrape_report.py --url <real posting> --url <another> --save-fixture acme.html
+```
+
+Opens each posting, reads the form, and checks it against every assumption the
+fixtures encode — upload field present, labels human-readable, contact fields
+resolving without a model call — printing PASS/FAIL per assumption plus the full
+field list. `--save-fixture` saves the live markup so a real shape can become an
+offline regression test.
+
+**3 — Stage 1 wording.**
+
+```bash
+python scripts/live_check.py --step tailoring
+```
+
+**4 — first real submission.** Only after 1–3 are clean, and worth being
+deliberate about: there is no Greenhouse sandbox, so any "test" submission is a
+real application landing on a real employer's desk. Two things follow. Don't send
+a junk application to a company to test plumbing — the click path is already
+rehearsed offline against `greenhouse_submit_rehearsal.html`, including the case
+where the browser silently refuses to submit. And make the first real submission
+a role Zac actually wants, with him watching, so the worst case is a slightly
+awkward genuine application rather than a wasted one.
+
+## Why "submitted" is not the same as submitted
+
+The submit click deserves its own note, because the failure is invisible. If any
+required field is empty — or holds a malformed email or URL — the browser blocks
+submission and fires **no event at all**: no error, no navigation, nothing to
+catch. The runner used to print "Submitted." regardless, which would have told
+Zac an application went in when it had not.
+
+It now checks for evidence of an actual submission after clicking (navigation, a
+confirmation message, or the form being replaced) and exits non-zero saying
+nothing was sent when it finds none. Both branches are tested offline against
+the rehearsal fixture.
 
 ## Build order from here
 

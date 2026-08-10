@@ -130,6 +130,34 @@ def verify_fills(
     return problems
 
 
+CONFIRMATION_PHRASES = (
+    "thank you", "thanks for applying", "application received", "we have received",
+    "successfully submitted", "application submitted", "your application is",
+)
+
+
+def submission_landed(page: Any, before_url: str, before_field_count: int) -> bool:
+    """Whether the click actually submitted anything.
+
+    A submit click is not evidence of submission. If any required field is empty
+    the browser blocks the submit and fires no event whatsoever — no error, no
+    navigation, nothing to catch. Reporting success there would tell Zac an
+    application went in when it did not, which is the worst thing this tool
+    could do. Look for a real change instead: navigation, a confirmation
+    message, or the form no longer being there.
+    """
+    if page.url != before_url:
+        return True
+    try:
+        body = (page.inner_text("body") or "").lower()
+    except Exception:
+        body = ""
+    if any(phrase in body for phrase in CONFIRMATION_PHRASES):
+        return True
+    # A single-page ATS often swaps the form out for a confirmation panel.
+    return len(extract_fields(page)) < before_field_count / 2
+
+
 def summarise(
     fields: dict[str, FormField], assignments: dict[str, Assignment], statuses: dict[str, str]
 ) -> list[str]:
@@ -254,13 +282,29 @@ def run(args: argparse.Namespace) -> int:
 
         for selector in SUBMIT_SELECTORS:
             button = page.locator(selector).first
-            if button.count():
-                button.click()
-                page.wait_for_timeout(4000)
-                page.screenshot(path=str(out_dir / "after_submit.png"), full_page=True)
+            if not button.count():
+                continue
+
+            before_url = page.url
+            before_fields = len(extract_fields(page))
+            button.click()
+            page.wait_for_timeout(4000)
+            page.screenshot(path=str(out_dir / "after_submit.png"), full_page=True)
+
+            if submission_landed(page, before_url, before_fields):
                 print(f"Submitted. Confirmation screenshot: {out_dir / 'after_submit.png'}")
                 browser.close()
                 return 0
+
+            # The commonest cause is HTML5 validation: a required field is empty,
+            # so the browser blocks submission and fires no event at all. Saying
+            # "submitted" here would be worse than saying nothing.
+            print("Clicked submit, but the page shows no sign of a submission —")
+            print("the form is probably blocking on a required field it considers empty.")
+            print(f"Check the browser and {out_dir / 'after_submit.png'}. NOTHING WAS SENT,")
+            print("as far as can be told from the page.")
+            browser.close()
+            return 4
 
         print("Could not find a submit button — submit manually in the open browser.")
         browser.close()

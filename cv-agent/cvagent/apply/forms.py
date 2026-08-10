@@ -41,10 +41,24 @@ _EXTRACT_JS = r"""
         if (node) labels.push(node.innerText);
       }
     }
-    // Many ATS forms put the question in a sibling/ancestor block, not a <label>.
+    // Many ATS forms put the question in a sibling block rather than a <label>:
+    // classic Greenhouse renders custom questions as div.application-question-label.
+    // Take the nearest such node *above* the control — using the whole group's
+    // text instead would splice the question together with the option list.
     let context = '';
     const group = el.closest('div,fieldset,li,section');
     if (group) {
+      const preceding = [...group.querySelectorAll(
+        'label,legend,[class*="label"],[class*="question"],p,h3,h4,h5,strong,b'
+      )].filter((node) =>
+        !node.contains(el)
+        && (el.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_PRECEDING)
+      );
+      const nearest = preceding[preceding.length - 1];
+      if (nearest) {
+        const text = (nearest.innerText || '').trim();
+        if (text && text.length < 200) labels.push(text);
+      }
       const text = group.innerText || '';
       if (text.length < 600) context = text;
     }

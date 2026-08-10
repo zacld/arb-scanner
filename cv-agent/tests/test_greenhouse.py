@@ -243,6 +243,24 @@ def test_question_in_a_sibling_div_is_read(embedded):
     assert field.required, "aria-required must count as required"
 
 
+def test_sibling_question_becomes_the_label_not_the_whole_block(embedded):
+    """Classic Greenhouse renders custom questions as a div, not a <label>. Falling
+    back to the surrounding block splices the question together with the option
+    list, which is what the reviewer then has to read."""
+    _, fields = embedded
+    dropdown = fields["job_application_answers_attributes_2_answer_selected"]
+    assert dropdown.label == "How did you hear about this role?"
+    assert "LinkedIn" not in dropdown.label, "options must not leak into the label"
+
+    textarea = fields["job_application_answers_attributes_1_text_value"]
+    assert textarea.label.startswith("Tell us about a deal you closed")
+
+
+def test_upload_label_excludes_the_attach_button_text(embedded):
+    _, fields = embedded
+    assert fields["resume"].label.strip().rstrip("*").strip() == "Resume/CV"
+
+
 def test_filling_across_frames_actually_lands(embedded, profile, cv_pdf):
     page, fields = embedded
     by_key = {f.key: f for f in fields.values()}
@@ -262,3 +280,74 @@ def test_scraped_fields_serialise_for_debugging(modern):
 
     _, fields = modern
     assert json.dumps([asdict(f) for f in fields.values()])
+
+
+# --------------------------------------------------------------------------
+# Submit-button discovery — the least-exercised line in the codebase
+# --------------------------------------------------------------------------
+
+def _click_submit(page):
+    from cvagent.apply.runner import SUBMIT_SELECTORS
+
+    for selector in SUBMIT_SELECTORS:
+        button = page.locator(selector).first
+        if button.count():
+            button.click()
+            page.wait_for_timeout(400)
+            return True
+    return False
+
+
+def test_blocked_submit_is_not_reported_as_sent(browser):
+    """A required field left empty makes the browser block submission and fire no
+    event at all. Reporting success here would tell Zac an application went in
+    when it did not — the worst failure this tool could have."""
+    from cvagent.apply.runner import submission_landed
+
+    page = open_form(browser, "greenhouse_submit_rehearsal.html")
+    before_url, before_count = page.url, len(extract_fields(page))
+
+    assert _click_submit(page), "no submit control matched"
+    assert page.locator("#rehearsal-received").count() == 0, "form should not have submitted"
+    assert submission_landed(page, before_url, before_count) is False
+
+
+def test_submit_lands_once_the_required_fields_are_filled(browser, cv_pdf):
+    """Rehearses the real click path offline. The live submit sends an application
+    to a real employer, so this is the only place it can be exercised safely."""
+    from cvagent.apply.runner import submission_landed
+
+    page = open_form(browser, "greenhouse_submit_rehearsal.html")
+    for field in extract_fields(page):
+        if not field.required:
+            continue
+        locator = page.locator(field.selector).first
+        if field.kind == "file":
+            locator.set_input_files(str(cv_pdf))
+        elif field.kind == "select":
+            locator.select_option(index=1)
+        elif field.kind == "checkbox":
+            locator.check()
+        else:
+            # Type-appropriate values: HTML5 validation rejects a malformed email
+            # or url just as firmly as an empty one, and blocks submission the
+            # same silent way.
+            locator.fill({
+                "email": "zac@example.com",
+                "url": "https://example.com",
+                "tel": "07867860977",
+            }.get(field.kind, "London, UK" if field.combobox else "filled"))
+
+    before_url, before_count = page.url, len(extract_fields(page))
+    assert _click_submit(page)
+    assert page.locator("#rehearsal-received").count() == 1
+    assert submission_landed(page, before_url, before_count) is True
+
+
+def test_submit_button_is_found_on_the_classic_input_style_form(browser):
+    """The classic board uses <input type=submit value="Submit Application">, not
+    a <button> — a selector list that only looks for buttons silently finds nothing."""
+    from cvagent.apply.runner import SUBMIT_SELECTORS
+
+    page = open_form(browser, "greenhouse_embed_inner.html")
+    assert any(page.locator(s).first.count() for s in SUBMIT_SELECTORS)

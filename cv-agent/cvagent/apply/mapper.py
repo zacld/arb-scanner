@@ -221,6 +221,13 @@ def classify_fields(
         if assignment.key not in valid_keys:
             continue  # model hallucinated a field that isn't on the page
         field = by_key[assignment.key]
+
+        if assignment.action not in ACTIONS:
+            assignment = Assignment(
+                assignment.key, "skip", "", "none", "low",
+                f"Classifier returned an unusable action {assignment.action!r}.",
+            )
+
         if assignment.action == "select" and field.options:
             labels = {o["label"] for o in field.options}
             if assignment.value not in labels:
@@ -229,6 +236,20 @@ def classify_fields(
                     f'"{assignment.value}" is not one of this dropdown\'s options. '
                     + assignment.note
                 )
+
+        # Setting a value programmatically bypasses the browser's own maxlength
+        # enforcement, so an over-long answer sails into the field and the form
+        # rejects it on submit. Cut it here and say so rather than discovering it
+        # at the submit step.
+        limit = int(field.maxlength) if field.maxlength.isdigit() else 0
+        if limit and len(assignment.value) > limit:
+            assignment.value = assignment.value[:limit].rstrip()
+            assignment.confidence = "low"
+            assignment.note = (
+                f"Answer exceeded the field's {limit}-character limit and was cut — "
+                "read it before submitting. " + assignment.note
+            )
+
         assignments[assignment.key] = assignment
 
     for field in fields:  # anything the model silently dropped
