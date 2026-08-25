@@ -5,8 +5,9 @@
 
 import express from "express";
 import * as store from "./db/store.js";
-import { refreshState, STATES } from "./stateMachine.js";
+import { refreshState, STATES, verifyAndRecordPool } from "./stateMachine.js";
 import { runDistribution, DistributionError } from "./distributionService.js";
+import { runFundingSwap, runFundingForward, FundingSwapError } from "./fundingSwapService.js";
 
 export function projectApiRouter(root) {
   const router = express.Router();
@@ -69,6 +70,57 @@ export function projectApiRouter(root) {
       res.json({ ok: true, ...result });
     } catch (err) {
       const status = err instanceof DistributionError ? 400 : 500;
+      res.status(status).json({ error: err.message || String(err) });
+    }
+  });
+
+  router.post("/:projectId/liquidity/verify-pool", async (req, res) => {
+    const project = getProjectOr404(req, res);
+    if (!project) return;
+    const { poolAddress } = req.body || {};
+    if (!poolAddress) return res.status(400).json({ error: "poolAddress is required." });
+    try {
+      const result = await verifyAndRecordPool(root, project.id, poolAddress);
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message || String(err) });
+    }
+  });
+
+  router.post("/:projectId/liquidity/config", (req, res) => {
+    const project = getProjectOr404(req, res);
+    if (!project) return;
+    const { slippageBps, reserveSol, swapPercent } = req.body || {};
+    try {
+      store.updateLiquidityConfig(root, project.id, { slippageBps, reserveSol, swapPercent });
+      res.json({ ok: true, project: store.getProject(root, project.id) });
+    } catch (err) {
+      res.status(500).json({ error: err.message || String(err) });
+    }
+  });
+
+  router.post("/:projectId/funding-swap", async (req, res) => {
+    const project = getProjectOr404(req, res);
+    if (!project) return;
+    const { swapPercent, slippageBps, force } = req.body || {};
+    try {
+      const result = await runFundingSwap(root, project.id, { swapPercent, slippageBps, force: !!force });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const status = err instanceof FundingSwapError ? 400 : 500;
+      res.status(status).json({ error: err.message || String(err) });
+    }
+  });
+
+  router.post("/:projectId/funding-forward", async (req, res) => {
+    const project = getProjectOr404(req, res);
+    if (!project) return;
+    const { force } = req.body || {};
+    try {
+      const result = await runFundingForward(root, project.id, { force: !!force });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      const status = err instanceof FundingSwapError ? 400 : 500;
       res.status(status).json({ error: err.message || String(err) });
     }
   });

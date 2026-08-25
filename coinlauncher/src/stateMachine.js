@@ -28,6 +28,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { getBalanceSol } from "./wallet.js";
 import { getTokenBalanceBaseUnits } from "./distributionService.js";
+import { verifyPoolAddress, checkRoute } from "./liquidityService.js";
 import * as store from "./db/store.js";
 
 export const STATES = [
@@ -48,15 +49,15 @@ export const STATES = [
 /** Static classification -- milestone vs operation. See module doc above. */
 export const STATE_KIND = {
   PROJECT_CREATED: "milestone",
-  TOKEN_CREATED: "milestone", // NOTE: the mint transaction itself is a real write not yet migrated onto chainTx.js -- see Phase 2 notes.
+  TOKEN_CREATED: "milestone", // NOTE: the mint transaction itself is a real write not yet migrated onto chainTx.js -- known gap, see report.
   LIQUIDITY_PENDING: "milestone",
   LIQUIDITY_CREATED: "milestone",
   ROUTE_CONFIRMED: "milestone",
   FUNDING_RECEIVED: "milestone",
-  FUNDING_SWAP_PENDING: "operation", // Phase 2: the funding wallet's SOL->TOKEN swap
+  FUNDING_SWAP_PENDING: "operation", // fundingSwapService.js
   FUNDING_SWAP_COMPLETE: "operation",
   MAIN_WALLET_FUNDED: "milestone",
-  DISTRIBUTION_PENDING: "operation", // implemented -- distributionService.js
+  DISTRIBUTION_PENDING: "operation", // distributionService.js
   DISTRIBUTION_COMPLETE: "operation",
   LAUNCH_ACTIVE: "milestone",
 };
@@ -75,9 +76,27 @@ export async function computeMilestones(root, projectId) {
   milestones.PROJECT_CREATED = { reached: true, mode: "explicit" };
   milestones.TOKEN_CREATED = { reached: !!project.mint_address, mode: "explicit" };
 
-  milestones.LIQUIDITY_PENDING = { reached: false, mode: "unavailable", note: "Liquidity creation lands in Phase 2." };
-  milestones.LIQUIDITY_CREATED = { reached: false, mode: "unavailable", note: "Requires manual pool creation + verification (Phase 2)." };
-  milestones.ROUTE_CONFIRMED = { reached: false, mode: "unavailable", note: "Requires a live router quote (Phase 2)." };
+  // LIQUIDITY_CREATED trusts the recorded verification (set by
+  // POST .../liquidity/verify-pool once verifyPoolAddress succeeds) rather
+  // than re-checking on-chain every refresh -- a verified pool account
+  // doesn't stop existing; ROUTE_CONFIRMED below is the one that must stay
+  // live/fresh, since tradeability can genuinely change moment to moment.
+  const liquidityCreated = !!(project.pool_address && project.pool_verified_at);
+  milestones.LIQUIDITY_CREATED = liquidityCreated
+    ? { reached: true, mode: "derived", detail: { poolAddress: project.pool_address, verifiedAt: project.pool_verified_at } }
+    : { reached: false, mode: "derived", note: "No verified pool address on file yet. Create one on Raydium, then verify it here." };
+  milestones.LIQUIDITY_PENDING = { reached: milestones.TOKEN_CREATED.reached && !liquidityCreated, mode: "derived" };
+
+  let routeResult = { available: false, reason: "No mint yet." };
+  if (project.mint_address) {
+    routeResult = await checkRoute(project.network, project.mint_address);
+  }
+  milestones.ROUTE_CONFIRMED = {
+    reached: routeResult.available,
+    mode: "derived",
+    detail: routeResult.available ? { quote: { outAmount: routeResult.quote?.outAmount } } : { reason: routeResult.reason },
+    note: routeResult.available ? undefined : routeResult.reason,
+  };
 
   let fundingSol = 0;
   let fundingCheckError = null;
@@ -94,8 +113,9 @@ export async function computeMilestones(root, projectId) {
     detail: { sol: fundingSol, error: fundingCheckError },
   };
 
-  milestones.FUNDING_SWAP_PENDING = { reached: false, mode: "unavailable", note: "Real market swap lands in Phase 2." };
-  milestones.FUNDING_SWAP_COMPLETE = { reached: false, mode: "unavailable", note: "Real market swap lands in Phase 2." };
+  const swapOp = store.findOperation(root, projectId, "FUNDING_SWAP");
+  milestones.FUNDING_SWAP_PENDING = { reached: !!swapOp, mode: "action", detail: { operationStatus: swapOp?.status || null } };
+  milestones.FUNDING_SWAP_COMPLETE = { reached: swapOp?.status === "confirmed", mode: "action" };
 
   let mainBalance = 0n;
   let mainCheckError = null;
@@ -116,7 +136,11 @@ export async function computeMilestones(root, projectId) {
   milestones.DISTRIBUTION_PENDING = { reached: !!distOp, mode: "action", detail: { operationStatus: distOp?.status || null } };
   milestones.DISTRIBUTION_COMPLETE = { reached: distOp?.status === "confirmed", mode: "action" };
 
-  milestones.LAUNCH_ACTIVE = { reached: false, mode: "unavailable", note: "Requires real liquidity + route (Phase 2)." };
+  milestones.LAUNCH_ACTIVE = {
+    reached: milestones.ROUTE_CONFIRMED.reached && milestones.DISTRIBUTION_COMPLETE.reached,
+    mode: "derived",
+    note: "Real liquidity exists to trade against AND operator wallets have been funded.",
+  };
 
   for (const state of STATES) milestones[state].kind = STATE_KIND[state];
   return milestones;
@@ -138,4 +162,15 @@ export async function refreshState(root, projectId) {
     }
   }
   return { furthest, milestones };
+}
+
+/** Verify and record a pool address for LIQUIDITY_CREATED. Never creates a pool -- only checks one that already exists. */
+export async function verifyAndRecordPool(root, projectId, poolAddress) {
+  const project = store.getProject(root, projectId);
+  if (!project) throw new Error("Project not found.");
+  const result = await verifyPoolAddress(project.network, poolAddress);
+  if (result.verified) {
+    store.setPoolAddress(root, projectId, poolAddress);
+  }
+  return result;
 }

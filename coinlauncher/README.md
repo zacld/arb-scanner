@@ -76,6 +76,66 @@ network needed); the actual `submitAndTrack` broadcast/poll loop itself has
 only been verified live up to this environment's network-block boundary,
 same limitation as everything else that needs real RPC access.
 
+## Phase 2: Liquidity + real Funding Wallet swap
+
+**Jupiter integration, verified not guessed:** before writing swap code,
+pulled Jupiter's own official client (`@jup-ag/api`, checked when it was
+three weeks old) via npm — registry access works here even though calling
+Jupiter's/Solana's actual APIs doesn't — and read its generated source
+directly. Confirmed `https://quote-api.jup.ag/v6` is still the real,
+current, free default (not a deprecated legacy tier — `lite-api.jup.ag`/
+`api.jup.ag` are paid-tier alternatives, not replacements), and that
+`SwapResponse` includes `lastValidBlockHeight` directly. `jupiter.js`'s
+`buildSwapTransaction` now returns the unsigned transaction plus that real
+value instead of Jupiter-specific code doing its own separate sign+send+
+confirm — swap goes through the exact same `chainTx.js` pipeline as
+everything else (`submitAndTrack` gained a `prebuilt` mode for transactions
+built elsewhere with their own blockhash, so it doesn't overwrite the
+blockhash Jupiter priced the route against).
+
+**Pool verification** (`liquidityService.js`): still never creates a pool —
+that stays on Raydium's own audited UI. Verifies one you already created by
+checking the account exists and is owned by a recognized Raydium program.
+Program IDs verified the same way as Jupiter's endpoints: installed
+`@raydium-io/raydium-sdk-v2` (checked when it was one day old) and read the
+real values out of its source rather than trusting memory, for both
+mainnet and devnet.
+
+**Route verification**: a live Jupiter quote for a small probe amount —
+the actual functional gate on whether a swap can run, independent of which
+DEX Jupiter routes through. Cached ~45s so page loads don't hammer their
+public endpoint. Devnet short-circuits before ever calling Jupiter (they
+have no devnet equivalent at all).
+
+**Funding Wallet's real swap** (`fundingSwapService.js`): two explicit,
+separately-retriable steps, not one atomic mega-transaction — a "run
+funding swap" action (SOL → TOKEN via a live-verified route only; refuses
+outright with the real reason if no route exists, never submits a
+transaction expected to fail) and a "forward to Main Holding" action
+(moves whatever TOKEN the Funding wallet actually holds afterward — real
+balance, not the swap quote's predicted output). Both on the Liquidity
+page, both go through the same `assertWalletClearToTransact` guard and
+operations ledger as Distribution. GBP/display amounts never enter any
+calculation — SOL and base units throughout.
+
+**Configurable, not hard-coded**: swap slippage, the SOL reserved for fees
+(covers both the swap's own fee and the subsequent forward's fee/rent),
+and what percentage of the available balance to swap are all per-project
+settings on the Liquidity page, with sensible defaults.
+
+**Milestone wiring**: `LIQUIDITY_CREATED` now reflects a real verified pool
+address (trusted once recorded — pools don't stop existing; re-verify by
+re-submitting the address if ever needed). `ROUTE_CONFIRMED` is live and
+fresh on every check (must be, since tradeability can genuinely change).
+`FUNDING_SWAP_PENDING`/`COMPLETE` track the swap operation's ledger status.
+`LAUNCH_ACTIVE` = a real route exists AND operator wallets are funded.
+
+Known gap, unchanged from Phase 1: the mint transaction itself
+(`createToken.js`) still isn't migrated onto `chainTx.js`'s hardened
+pipeline — it's a single one-time operation per project rather than a
+repeatable one, which is why it's lower priority, but it's still a real
+write and worth closing eventually.
+
 **What's real vs. placeholder in Phase 1:** `PROJECT_CREATED` and
 `TOKEN_CREATED` are explicit (set when they actually happen).
 `FUNDING_RECEIVED` and `MAIN_WALLET_FUNDED` are derived live from real

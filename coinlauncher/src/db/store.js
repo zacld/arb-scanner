@@ -26,6 +26,23 @@ export function updateProjectMint(root, projectId, { mintAddress, decimals, supp
   ).run(mintAddress, decimals, String(supply), metadataUri || null, projectId);
 }
 
+export function setPoolAddress(root, projectId, poolAddress) {
+  const db = getDb(root);
+  db.prepare(`UPDATE projects SET pool_address = ?, pool_verified_at = ? WHERE id = ?`).run(poolAddress, now(), projectId);
+}
+
+export function updateLiquidityConfig(root, projectId, { slippageBps, reserveSol, swapPercent }) {
+  const db = getDb(root);
+  const project = getProject(root, projectId);
+  if (!project) throw new Error("Project not found.");
+  db.prepare(`UPDATE projects SET swap_slippage_bps = ?, funding_reserve_sol = ?, funding_swap_percent = ? WHERE id = ?`).run(
+    slippageBps ?? project.swap_slippage_bps,
+    reserveSol ?? project.funding_reserve_sol,
+    swapPercent ?? project.funding_swap_percent,
+    projectId
+  );
+}
+
 export function getProject(root, projectId) {
   const db = getDb(root);
   return db.prepare(`SELECT * FROM projects WHERE id = ?`).get(projectId) || null;

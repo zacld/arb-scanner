@@ -35,6 +35,11 @@ function migrate(db) {
       decimals INTEGER,
       supply TEXT,
       metadata_uri TEXT,
+      pool_address TEXT,             -- user-provided, verified against a known DEX program before being trusted
+      pool_verified_at TEXT,
+      swap_slippage_bps INTEGER DEFAULT 100,
+      funding_reserve_sol REAL DEFAULT 0.02,  -- SOL kept back from the funding swap to cover this tx + the forward-to-Main-Holding tx
+      funding_swap_percent REAL DEFAULT 100,  -- % of (balance - reserve) to swap; configurable, never hard-coded to 100
       created_at TEXT NOT NULL
     );
 
@@ -106,12 +111,21 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_ops_project ON operations(project_id);
   `);
 
-  // Safe migration for DBs created before last_valid_block_height existed.
-  // Phase 1 shipped without this column; nothing in this project has been
-  // used with real funds yet, but guard it properly anyway rather than
-  // requiring anyone to manually delete their local DB.
-  const columns = db.prepare(`PRAGMA table_info(transactions)`).all();
-  if (!columns.some((c) => c.name === "last_valid_block_height")) {
-    db.exec(`ALTER TABLE transactions ADD COLUMN last_valid_block_height INTEGER;`);
+  // Safe migrations for DBs created before these columns existed. Nothing
+  // in this project has been used with real funds yet, but guard it
+  // properly anyway rather than requiring anyone to manually delete their
+  // local DB.
+  addColumnIfMissing(db, "transactions", "last_valid_block_height", "INTEGER");
+  addColumnIfMissing(db, "projects", "pool_address", "TEXT");
+  addColumnIfMissing(db, "projects", "pool_verified_at", "TEXT");
+  addColumnIfMissing(db, "projects", "swap_slippage_bps", "INTEGER DEFAULT 100");
+  addColumnIfMissing(db, "projects", "funding_reserve_sol", "REAL DEFAULT 0.02");
+  addColumnIfMissing(db, "projects", "funding_swap_percent", "REAL DEFAULT 100");
+}
+
+function addColumnIfMissing(db, table, column, ddlType) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddlType};`);
   }
 }

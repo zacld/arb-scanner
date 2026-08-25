@@ -86,9 +86,11 @@ test("computeMilestones: explicit states reflect real project/mint facts, unavai
   let milestones = await computeMilestones(TEST_ROOT, projectId);
   assert.equal(milestones.PROJECT_CREATED.reached, true);
   assert.equal(milestones.TOKEN_CREATED.reached, false);
+  // LIQUIDITY_CREATED/LAUNCH_ACTIVE are real (Phase 2) checks now, not
+  // "unavailable" placeholders -- for a project with no pool/mint they
+  // correctly come back false via a live-but-cheap DB/derived check.
   assert.equal(milestones.LIQUIDITY_CREATED.reached, false);
-  assert.equal(milestones.LIQUIDITY_CREATED.mode, "unavailable");
-  assert.equal(milestones.LAUNCH_ACTIVE.mode, "unavailable");
+  assert.equal(milestones.LAUNCH_ACTIVE.reached, false);
 
   store.updateProjectMint(TEST_ROOT, projectId, { mintAddress: "MintAddr222", decimals: 6, supply: "1000000000", metadataUri: "" });
   milestones = await computeMilestones(TEST_ROOT, projectId);
