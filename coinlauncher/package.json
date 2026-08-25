@@ -7,7 +7,10 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "cli": "node src/cli.js"
+    "cli": "node src/cli.js",
+    "wallet:new": "node src/wallet-setup.js new",
+    "wallet:airdrop": "node src/wallet-setup.js airdrop",
+    "wallet:balance": "node src/wallet-setup.js balance"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-token-metadata": "^3.3.0",

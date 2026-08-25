@@ -19,23 +19,21 @@ npm install
 ```
 
 You need a Solana keypair file (the standard format the Solana CLI produces).
-If you don't have one:
+You do **not** need the Solana CLI installed — `npm install` above already
+pulled in everything needed, and this repo ships a small helper for it:
 
 ```bash
-# Requires the Solana CLI (https://docs.solana.com/cli/install-solana-cli-tools)
-solana-keygen new --outfile ~/.config/solana/id.json
+npm run wallet:new         # creates ~/.config/solana/id.json if it doesn't exist
+npm run wallet:airdrop     # requests 2 devnet SOL (free, fake) for that wallet
+npm run wallet:balance     # check the balance any time
 ```
+
+(If you already have the real Solana CLI installed and prefer it, `solana-keygen new` / `solana airdrop 2 --url devnet` do the same thing.)
 
 This file **never leaves your machine** — the dashboard/CLI reads it locally
 to sign transactions and nothing else touches it. Don't commit it, don't
 paste its contents anywhere, don't send it to anyone (that *is* "giving out
 the wallet" — the exact thing to avoid).
-
-For devnet testing you need devnet SOL (free, fake):
-
-```bash
-solana airdrop 2 --url devnet
-```
 
 ## Run the dashboard
 
