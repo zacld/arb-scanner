@@ -60,24 +60,42 @@ export function classifyReconciliation({ signatureStatus, lastValidBlockHeight, 
  * reconciliation -- never silently marked failed just because we stopped
  * watching).
  *
- * `transaction` must have its instructions (and feePayer, for legacy
- * Transactions) set but NOT recentBlockhash/signatures -- this function
- * fetches a fresh blockhash itself so it can track expiry.
+ * By default, `transaction` must have its instructions (and feePayer, for
+ * legacy Transactions) set but NOT recentBlockhash/signatures -- this
+ * function fetches a fresh blockhash itself so it can track expiry. That's
+ * right for transactions WE build (e.g. distribution transfers).
+ *
+ * For a transaction some other service already built and priced against a
+ * specific blockhash (e.g. Jupiter's swap response), pass
+ * `prebuilt: { lastValidBlockHeight }` instead -- this skips fetching/
+ * setting a blockhash entirely and uses the one already embedded in the
+ * transaction, with the caller-supplied lastValidBlockHeight for expiry
+ * tracking. Overwriting a prebuilt transaction's blockhash would decouple
+ * it from the price/route it was actually built for.
  */
-export async function submitAndTrack(root, { network, transaction, signers, meta, pollTimeoutMs = 30000 }) {
+export async function submitAndTrack(root, { network, transaction, signers, meta, pollTimeoutMs = 30000, prebuilt = null }) {
   const connection = new Connection(RPC_ENDPOINTS[network], "confirmed");
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
 
-  let signature;
+  let lastValidBlockHeight;
+  if (prebuilt) {
+    lastValidBlockHeight = prebuilt.lastValidBlockHeight;
+  } else {
+    const latest = await connection.getLatestBlockhash();
+    lastValidBlockHeight = latest.lastValidBlockHeight;
+    if (transaction instanceof VersionedTransaction) {
+      transaction.message.recentBlockhash = latest.blockhash;
+    } else {
+      transaction.recentBlockhash = latest.blockhash;
+      transaction.feePayer = signers[0].publicKey;
+    }
+  }
+
   if (transaction instanceof VersionedTransaction) {
-    transaction.message.recentBlockhash = blockhash;
     transaction.sign(signers);
   } else {
-    transaction.recentBlockhash = blockhash;
-    transaction.feePayer = signers[0].publicKey;
     transaction.sign(...signers);
   }
-  signature = txSignatureBase58(transaction);
+  const signature = txSignatureBase58(transaction);
 
   // Persisted BEFORE broadcasting. If the process dies right here, this
   // row is reconciliation's starting point -- not a guess.

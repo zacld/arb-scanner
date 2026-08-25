@@ -14,6 +14,7 @@ import {
   PublicKey,
   SystemProgram,
   Transaction,
+  VersionedTransaction,
   sendAndConfirmTransaction,
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
@@ -25,7 +26,8 @@ import {
 } from "@solana/spl-token";
 import { RPC_ENDPOINTS } from "./createToken.js";
 import * as store from "./db/store.js";
-import { getSwapQuote, executeSwap } from "./jupiter.js";
+import { getSwapQuote, buildSwapTransaction } from "./jupiter.js";
+import { submitAndTrack, assertWalletClearToTransact } from "./chainTx.js";
 
 const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 
@@ -261,19 +263,45 @@ export function consoleApiRouter(root) {
     if (!quoteResponse) return res.status(400).json({ error: "quoteResponse is required (from /swap/quote)." });
 
     try {
+      // Normal recovery path before any new write: reconcile this wallet's
+      // history against the chain first, refuse only if something is still
+      // genuinely ambiguous. Never a blind retry.
+      await assertWalletClearToTransact(root, { network: project.network, walletId: wallet.id });
+
       const keypair = loadKeypair(wallet);
-      const signature = await executeSwap({ keypair, quoteResponse });
-      store.recordTransaction(root, {
-        projectId: project.id,
-        walletId: wallet.id,
-        walletRole: wallet.role,
-        type: "SWAP",
-        route: "jupiter",
-        signature,
-        network: project.network,
-        status: "confirmed",
+      const { swapTransactionBase64, lastValidBlockHeight } = await buildSwapTransaction({
+        userPublicKey: wallet.address,
+        quoteResponse,
       });
-      res.json({ ok: true, signature, explorerUrl: `https://solscan.io/tx/${signature}` });
+      const transaction = VersionedTransaction.deserialize(Buffer.from(swapTransactionBase64, "base64"));
+
+      const result = await submitAndTrack(root, {
+        network: project.network,
+        transaction,
+        signers: [keypair],
+        prebuilt: { lastValidBlockHeight },
+        meta: {
+          projectId: project.id,
+          walletId: wallet.id,
+          walletRole: wallet.role,
+          type: "SWAP",
+          inputAsset: quoteResponse.inputMint,
+          inputAmount: quoteResponse.inAmount,
+          outputAsset: quoteResponse.outputMint,
+          outputAmount: quoteResponse.outAmount,
+          route: "jupiter",
+        },
+      });
+
+      if (result.status === "confirmed") {
+        res.json({ ok: true, signature: result.signature, explorerUrl: `https://solscan.io/tx/${result.signature}` });
+      } else {
+        res.status(502).json({
+          error: `Swap ${result.status}${result.error ? `: ${result.error}` : ""}. Signature: ${result.signature}.`,
+          signature: result.signature,
+          status: result.status,
+        });
+      }
     } catch (err) {
       res.status(500).json({ error: err.message || String(err) });
     }
