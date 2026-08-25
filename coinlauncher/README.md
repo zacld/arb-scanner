@@ -39,13 +39,42 @@ database (`coinlauncher/data/coinlauncher.db`, via Node's built-in
 `main_holding` (distribution hub), `operator` (Wallets 1-N, commonly
 controlled, never presented as independent holders).
 
-**Distribution** (Main Holding → operator wallets) is hardened per the
-Phase 1 spec: percentages apply to Main Holding's *real* on-chain balance
-at run time (not an assumed total), an idempotency ledger means a crash
-mid-run resumes instead of restarting blindly, every attempt is written to
-the audit trail as it happens, and `DISTRIBUTION_COMPLETE` is only ever set
-once every wallet's transfer has actually confirmed on-chain. Run it from
-the Overview tab.
+**Distribution** (Main Holding → operator wallets) is hardened: percentages
+apply to Main Holding's *real* on-chain balance at run time (not an assumed
+total), an operations ledger means a crash mid-run resumes instead of
+restarting blindly, every attempt is written to the audit trail as it
+happens, and `DISTRIBUTION_COMPLETE` is only ever set once every wallet's
+transfer has actually confirmed on-chain. Run it from the Overview tab.
+
+**Milestones vs. operations** (`stateMachine.js`'s `STATE_KIND`): every one
+of the 12 states is classified as a *milestone* (a pure observation of
+chain/DB state — safe to recompute anywhere, any time, no side effects —
+e.g. "does Funding wallet have SOL") or an *operation* (an intentional,
+tracked write, gated by the operations ledger and the hardened transaction
+pipeline below — e.g. `DISTRIBUTION_PENDING`/`COMPLETE` track the
+distribution action's own lifecycle, not an independently-observable
+condition). The Overview ladder shows a badge for each.
+
+**Transaction crash-safety** (`chainTx.js`): every write goes through
+`build → sign → persist (with signature) → broadcast → poll/confirm →
+update`. A Solana signature is deterministic from signing (not assigned by
+the network), so it's known and persisted *before* broadcasting — a crash
+at any point after that leaves a durable, checkable record instead of an
+unknowable gap. On restart (or before any new write for a wallet),
+`assertWalletClearToTransact` reconciles every unresolved transaction
+against the chain first: confirmed → recorded; landed-but-errored →
+failed; blockhash expired without landing → `expired` (provably dead, safe
+to build a *fresh* transaction for the same logical operation); still
+genuinely ambiguous → blocks new writes for that wallet until it resolves.
+`force` only overrides the separate "already completed" guard — it does
+not bypass reconciliation, and nothing ever blindly rebroadcasts the same
+signed bytes just because local confirmation wasn't recorded.
+
+Known residual gap: the pure decision logic and the reconcile/guard
+behavior are unit-tested (with an injectable fake chain response — no live
+network needed); the actual `submitAndTrack` broadcast/poll loop itself has
+only been verified live up to this environment's network-block boundary,
+same limitation as everything else that needs real RPC access.
 
 **What's real vs. placeholder in Phase 1:** `PROJECT_CREATED` and
 `TOKEN_CREATED` are explicit (set when they actually happen).

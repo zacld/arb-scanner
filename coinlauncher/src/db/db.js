@@ -91,8 +91,9 @@ function migrate(db) {
       destination TEXT,
       route TEXT,
       signature TEXT,
+      last_valid_block_height INTEGER, -- the blockhash's expiry height at signing time; lets reconciliation tell "still might land" from "can never land"
       network TEXT,
-      status TEXT NOT NULL,          -- pending | confirmed | failed
+      status TEXT NOT NULL,          -- submitted | confirmed | failed | expired
       error TEXT,
       operation_id TEXT REFERENCES operations(id),
       created_at TEXT NOT NULL
@@ -101,6 +102,16 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_wallets_project ON wallets(project_id);
     CREATE INDEX IF NOT EXISTS idx_tx_project ON transactions(project_id);
     CREATE INDEX IF NOT EXISTS idx_tx_operation ON transactions(operation_id);
+    CREATE INDEX IF NOT EXISTS idx_tx_wallet_status ON transactions(wallet_id, status);
     CREATE INDEX IF NOT EXISTS idx_ops_project ON operations(project_id);
   `);
+
+  // Safe migration for DBs created before last_valid_block_height existed.
+  // Phase 1 shipped without this column; nothing in this project has been
+  // used with real funds yet, but guard it properly anyway rather than
+  // requiring anyone to manually delete their local DB.
+  const columns = db.prepare(`PRAGMA table_info(transactions)`).all();
+  if (!columns.some((c) => c.name === "last_valid_block_height")) {
+    db.exec(`ALTER TABLE transactions ADD COLUMN last_valid_block_height INTEGER;`);
+  }
 }

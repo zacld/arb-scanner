@@ -26,6 +26,9 @@
   .step.unavailable .dot { background: #8886; }
   .step.pending .dot { background: #f39c12; }
   .step .note { color: #888; font-size: 0.78rem; margin-left: auto; }
+  .kind { font-size: 0.65rem; padding: 1px 6px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .kind.milestone { background: #3498db22; color: #3498db; }
+  .kind.operation { background: #6c5ce722; color: #6c5ce7; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 8px; }
   th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #8882; }
   button { padding: 8px 14px; border-radius: 6px; border: none; background: #6c5ce7; color: white; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
@@ -128,7 +131,8 @@
           const m = stateData.milestones[s];
           const cls = m.reached ? "reached" : m.mode === "unavailable" ? "unavailable" : "pending";
           const note = m.note || (m.detail && m.detail.error) || "";
-          return `<div class="step ${cls}"><span class="dot"></span><span>${s}</span>${note ? `<span class="note">${note}</span>` : ""}</div>`;
+          const kindBadge = `<span class="kind ${m.kind}">${m.kind}</span>`;
+          return `<div class="step ${cls}"><span class="dot"></span><span>${s}</span>${kindBadge}${note ? `<span class="note">${note}</span>` : ""}</div>`;
         })
         .join("");
 

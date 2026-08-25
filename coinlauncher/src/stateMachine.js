@@ -1,13 +1,29 @@
-// The 12-state launch model. Phase 1 implements this as a checklist of
-// independently-derivable/action-driven milestones rather than a rigid
-// single-pointer FSM that only advances strictly in order -- see the
-// reasoning in the Phase 1 report (README / commit message) for why. Short
-// version: some milestones are genuinely *observed from live chain state*
-// (funding received, main wallet funded) rather than *driven by a pipeline
-// action*, consistent with the "balances always reflect actual on-chain
-// reality" principle. This lets Distribution be built, hardened, and
-// actually tested now without requiring Phase 2's liquidity/swap work to
-// artificially unlock it. Flagged explicitly as a judgment call.
+// The 12-state launch model. Implemented as a checklist of independently-
+// derivable/action-driven milestones rather than a rigid single-pointer
+// FSM that only advances strictly in order -- kept deliberately (per
+// explicit direction) rather than converted to strict linear ordering.
+//
+// Formalized here: every state is classified by KIND, independent of
+// whether it's implemented yet:
+//
+//   "milestone" -- a pure OBSERVATION of chain/DB state. No side effects.
+//     Always safe to recompute, any number of times, from any process.
+//     Never needs an idempotency ledger because checking it can't cause
+//     harm. E.g. "does Funding wallet have SOL" is just a balance read.
+//
+//   "operation" -- an intentional, tracked WRITE. Goes through the
+//     operations ledger (db/store.js) and chainTx.js's hardened
+//     build->sign->persist->broadcast->poll->update pipeline. Has a
+//     PENDING/COMPLETE pair specifically because it's tracking an attempt
+//     at doing something, not observing whether something already exists.
+//     E.g. DISTRIBUTION_PENDING/COMPLETE track the distribution operation's
+//     own lifecycle, not an independently-observable chain condition.
+//
+// This distinction matters operationally: milestones can be refreshed
+// freely from anywhere (a page load, a poll loop) with zero risk.
+// Operations must never be triggered opportunistically the same way --
+// they're user-initiated, idempotency-guarded, and reconciled against the
+// chain before any retry.
 
 import { PublicKey } from "@solana/web3.js";
 import { getBalanceSol } from "./wallet.js";
@@ -28,6 +44,22 @@ export const STATES = [
   "DISTRIBUTION_COMPLETE",
   "LAUNCH_ACTIVE",
 ];
+
+/** Static classification -- milestone vs operation. See module doc above. */
+export const STATE_KIND = {
+  PROJECT_CREATED: "milestone",
+  TOKEN_CREATED: "milestone", // NOTE: the mint transaction itself is a real write not yet migrated onto chainTx.js -- see Phase 2 notes.
+  LIQUIDITY_PENDING: "milestone",
+  LIQUIDITY_CREATED: "milestone",
+  ROUTE_CONFIRMED: "milestone",
+  FUNDING_RECEIVED: "milestone",
+  FUNDING_SWAP_PENDING: "operation", // Phase 2: the funding wallet's SOL->TOKEN swap
+  FUNDING_SWAP_COMPLETE: "operation",
+  MAIN_WALLET_FUNDED: "milestone",
+  DISTRIBUTION_PENDING: "operation", // implemented -- distributionService.js
+  DISTRIBUTION_COMPLETE: "operation",
+  LAUNCH_ACTIVE: "milestone",
+};
 
 const FUNDING_RECEIVED_MIN_SOL = 0.001;
 
@@ -86,6 +118,7 @@ export async function computeMilestones(root, projectId) {
 
   milestones.LAUNCH_ACTIVE = { reached: false, mode: "unavailable", note: "Requires real liquidity + route (Phase 2)." };
 
+  for (const state of STATES) milestones[state].kind = STATE_KIND[state];
   return milestones;
 }
 

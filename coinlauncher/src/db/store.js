@@ -132,8 +132,8 @@ export function recordTransaction(root, tx) {
     .prepare(
       `INSERT INTO transactions
         (project_id, wallet_id, wallet_role, type, input_asset, input_amount, output_asset, output_amount,
-         destination, route, signature, network, status, error, operation_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         destination, route, signature, last_valid_block_height, network, status, error, operation_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       tx.projectId,
@@ -147,6 +147,7 @@ export function recordTransaction(root, tx) {
       tx.destination || null,
       tx.route || null,
       tx.signature || null,
+      tx.lastValidBlockHeight ?? null,
       tx.network || null,
       tx.status,
       tx.error || null,
@@ -161,6 +162,12 @@ export function updateTransaction(root, txId, { status, signature, error }) {
   db.prepare(
     `UPDATE transactions SET status = ?, signature = COALESCE(?, signature), error = COALESCE(?, error) WHERE id = ?`
   ).run(status, signature || null, error || null, txId);
+}
+
+/** Transactions for a wallet still in-flight (submitted but not yet confirmed/failed/expired). */
+export function getUnresolvedTransactionsForWallet(root, walletId) {
+  const db = getDb(root);
+  return db.prepare(`SELECT * FROM transactions WHERE wallet_id = ? AND status = 'submitted' ORDER BY id ASC`).all(walletId);
 }
 
 export function getTransactionsByProject(root, projectId, limit = 100) {

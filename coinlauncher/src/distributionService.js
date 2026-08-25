@@ -1,20 +1,28 @@
-// Hardened Main Holding -> Operator Wallets distribution. This is the
-// execution layer requested for Phase 1: real source-balance validation,
-// percentage validation, an idempotency ledger so a crash mid-run can be
-// resumed instead of blindly restarted, and a full audit trail written as
-// it happens (not just at the end). DISTRIBUTION_COMPLETE is only ever set
-// once every wallet's transfer has actually confirmed on-chain.
+// Hardened Main Holding -> Operator Wallets distribution. Real source-
+// balance validation, percentage validation, an operations ledger so a
+// crash mid-run resumes instead of blindly restarting, and every write
+// goes through chainTx.js's build->sign->persist->broadcast->poll->update
+// pipeline so a crash can never leave an ambiguous, un-reconcilable state.
+// DISTRIBUTION_COMPLETE is only ever set once every wallet's transfer has
+// actually confirmed on-chain.
 //
 // Percentages apply to the Main Holding wallet's REAL observed token
 // balance at the moment of the run, not to a configured/assumed total
 // supply figure -- consistent with wallets always reflecting actual
 // on-chain state.
+//
+// This is an OPERATION (see stateMachine.js's kind classification): an
+// intentional, tracked, idempotent write, distinct from a MILESTONE (a
+// pure observation of chain state, no side effects, always safe to
+// recompute). DISTRIBUTION_PENDING/COMPLETE exist specifically to track
+// this operation's lifecycle, not to independently observe some condition.
 
 import fs from "fs";
 import { Keypair, Connection, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddress, TokenAccountNotFoundError } from "@solana/spl-token";
 import { RPC_ENDPOINTS } from "./createToken.js";
-import { transferShareToWallet } from "./distribute.js";
+import { buildShareTransferTransaction } from "./distribute.js";
+import { submitAndTrack, assertWalletClearToTransact } from "./chainTx.js";
 import * as store from "./db/store.js";
 
 export class DistributionError extends Error {}
@@ -48,9 +56,11 @@ export async function getTokenBalanceBaseUnits(network, mintAddress, ownerPublic
 /**
  * @param allocations optional [{ walletId, percent }] override; defaults to
  *   each operator wallet's configured allocation_percent from the DB.
- * @param force explicitly re-run even though a prior run completed, or
- *   retry a wallet whose last attempt didn't resolve cleanly (verify on
- *   Solscan first -- see the orphaned-pending check below).
+ * @param force re-run even though a prior run completed. Does NOT bypass
+ *   crash-safety reconciliation -- it only overrides the "already
+ *   completed" guard. If the Main Holding wallet has a transaction stuck
+ *   ambiguous after reconciliation, this still refuses; that's not what
+ *   force is for.
  */
 export async function runDistribution(root, projectId, { allocations, force = false } = {}) {
   const project = store.getProject(root, projectId);
@@ -83,6 +93,13 @@ export async function runDistribution(root, projectId, { allocations, force = fa
     operationId = store.createOperation(root, { projectId, operationType: "DISTRIBUTION", config: { allocations: allocationsToUse } });
   }
 
+  // The normal recovery path: reconcile Main Holding's own transaction
+  // history against the chain before building anything new. This is what
+  // actually replaces "force" as the default answer to an interrupted run
+  // -- most of the time reconciliation resolves everything on its own
+  // (confirmed, failed, or genuinely expired) and this passes silently.
+  await assertWalletClearToTransact(root, { network: project.network, walletId: mainHolding.id });
+
   const mainHoldingKeypair = loadKeypairFromPath(mainHolding.keypair_path);
   const mintAddress = new PublicKey(project.mint_address);
   const sourceBalance = await getTokenBalanceBaseUnits(project.network, mintAddress, mainHoldingKeypair.publicKey);
@@ -94,6 +111,7 @@ export async function runDistribution(root, projectId, { allocations, force = fa
     );
   }
 
+  const connection = new Connection(RPC_ENDPOINTS[project.network], "confirmed");
   const priorTxForOp = store.getTransactionsByOperation(root, operationId);
   const results = [];
   let anyFailed = false;
@@ -106,59 +124,60 @@ export async function runDistribution(root, projectId, { allocations, force = fa
       continue;
     }
 
+    // Already confirmed for this operation -- don't send again.
     const confirmedTx = priorTxForOp.find((t) => t.wallet_id === operatorWallet.id && t.status === "confirmed");
     if (confirmedTx) {
       results.push({ walletId: operatorWallet.id, label: operatorWallet.label, ok: true, signature: confirmedTx.signature, resumed: true });
       continue;
     }
-
-    // A pending row with no resolved outcome means a previous attempt was
-    // interrupted mid-flight (process crash between submit and record).
-    // Don't silently retry -- that's exactly the double-transfer risk
-    // idempotency is supposed to prevent. Surface it instead.
-    const orphanedPending = priorTxForOp.find((t) => t.wallet_id === operatorWallet.id && t.status === "pending");
-    if (orphanedPending && !force) {
-      anyFailed = true;
-      results.push({
-        walletId: operatorWallet.id,
-        label: operatorWallet.label,
-        ok: false,
-        error: `A previous attempt for this wallet (tx #${orphanedPending.id}) did not resolve. Verify on Solscan whether it landed before retrying with force.`,
-      });
-      continue;
-    }
+    // A prior attempt that failed or expired left nothing pending on-chain
+    // for this wallet -- safe to build a fresh transaction and try again.
 
     const amountBaseUnits = (sourceBalance * BigInt(Math.round(Number(alloc.percent) * 100))) / 10000n;
 
-    const pendingTxId = store.recordTransaction(root, {
-      projectId,
-      walletId: operatorWallet.id,
-      walletRole: "operator",
-      type: "DISTRIBUTION",
-      inputAsset: project.symbol,
-      inputAmount: amountBaseUnits.toString(),
-      outputAsset: project.symbol,
-      outputAmount: amountBaseUnits.toString(),
-      destination: operatorWallet.address,
-      network: project.network,
-      status: "pending",
-      operationId,
-    });
-
     try {
-      const { signature } = await transferShareToWallet({
-        network: project.network,
+      const { transaction } = await buildShareTransferTransaction({
+        connection,
         fromKeypair: mainHoldingKeypair,
         toPublicKey: new PublicKey(operatorWallet.address),
         mintAddress,
         decimals: project.decimals,
         amountBaseUnits,
       });
-      store.updateTransaction(root, pendingTxId, { status: "confirmed", signature });
-      results.push({ walletId: operatorWallet.id, label: operatorWallet.label, ok: true, signature, amount: amountBaseUnits.toString() });
+
+      if (!transaction) {
+        // Nothing left to do for this wallet (ATA exists, SOL topped up,
+        // amount is 0) -- treat as trivially satisfied.
+        results.push({ walletId: operatorWallet.id, label: operatorWallet.label, ok: true, skipped: true });
+        continue;
+      }
+
+      const { signature, status, error } = await submitAndTrack(root, {
+        network: project.network,
+        transaction,
+        signers: [mainHoldingKeypair],
+        meta: {
+          projectId,
+          walletId: operatorWallet.id,
+          walletRole: "operator",
+          type: "DISTRIBUTION",
+          inputAsset: project.symbol,
+          inputAmount: amountBaseUnits.toString(),
+          outputAsset: project.symbol,
+          outputAmount: amountBaseUnits.toString(),
+          destination: operatorWallet.address,
+          operationId,
+        },
+      });
+
+      if (status === "confirmed") {
+        results.push({ walletId: operatorWallet.id, label: operatorWallet.label, ok: true, signature, amount: amountBaseUnits.toString() });
+      } else {
+        anyFailed = true;
+        results.push({ walletId: operatorWallet.id, label: operatorWallet.label, ok: false, signature, status, error });
+      }
     } catch (err) {
       anyFailed = true;
-      store.updateTransaction(root, pendingTxId, { status: "failed", error: err.message || String(err) });
       results.push({ walletId: operatorWallet.id, label: operatorWallet.label, ok: false, error: err.message || String(err) });
     }
   }
