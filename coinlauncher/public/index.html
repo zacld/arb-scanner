@@ -12,6 +12,7 @@
   fieldset { border: 1px solid #8883; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
   legend { padding: 0 6px; font-weight: 600; }
   label { display: block; margin-top: 10px; font-size: 0.9rem; }
+  .hint { color: #888; font-size: 0.8rem; font-weight: normal; margin-top: 3px; }
   input, select, textarea { width: 100%; box-sizing: border-box; padding: 8px; margin-top: 4px; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; }
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
@@ -32,17 +33,25 @@
   <form id="launchForm">
     <fieldset>
       <legend>Token</legend>
+      <div class="hint">Everything below is pre-filled with the standard "trustworthy launch" defaults. Only Name and Symbol are yours to decide — nothing else needs to change unless you have a reason to.</div>
       <label>Name <input name="name" required placeholder="My Token" /></label>
       <div class="row">
         <div><label>Symbol <input name="symbol" required placeholder="MYTKN" maxlength="10" /></label></div>
-        <div><label>Decimals <input name="decimals" type="number" value="6" min="0" max="9" /></label></div>
+        <div><label>Decimals <input name="decimals" type="number" value="6" min="0" max="9" />
+          <div class="hint">6 — standard on Solana (matches pump.fun and most SPL tokens)</div>
+        </label></div>
       </div>
-      <label>Total supply <input name="supply" type="number" required placeholder="1000000000" /></label>
+      <label>Total supply <input name="supply" type="number" value="1000000000" required />
+        <div class="hint">1,000,000,000 — the common round total for a Solana token launch</div>
+      </label>
       <label>Metadata URI (optional — JSON with description/image, e.g. hosted on Arweave/IPFS)
         <input name="uri" placeholder="https://..." />
+        <div class="hint">Leave blank to launch now; add later if you want an image/description to show in wallets</div>
       </label>
       <label><input type="checkbox" name="revokeAuthorities" checked style="width:auto;display:inline-block;margin-right:6px;" />
-        Revoke mint + freeze authority after mint (recommended — supply can never be inflated later)</label>
+        Revoke mint + freeze authority after mint
+        <div class="hint">On by default — supply is locked forever, the standard signal that a launch isn't a mint-and-dump rug. Leave this on.</div>
+      </label>
     </fieldset>
 
     <fieldset>
