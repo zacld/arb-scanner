@@ -20,6 +20,7 @@ import {
   fromWeb3JsKeypair,
   toWeb3JsPublicKey,
 } from "@metaplex-foundation/umi-web3js-adapters";
+import { expandHome } from "./wallet.js";
 
 export const RPC_ENDPOINTS = {
   devnet: "https://api.devnet.solana.com",
@@ -28,7 +29,7 @@ export const RPC_ENDPOINTS = {
 
 /** Load a standard `solana-keygen`-format JSON keypair file. Never leaves this process. */
 export function loadOwnerKeypair(keypairPath) {
-  const raw = fs.readFileSync(keypairPath, "utf8");
+  const raw = fs.readFileSync(expandHome(keypairPath), "utf8");
   const secret = Uint8Array.from(JSON.parse(raw));
   return Keypair.fromSecretKey(secret);
 }
