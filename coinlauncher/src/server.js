@@ -1,14 +1,14 @@
-// Local-only dashboard for launching a token. Binds to 127.0.0.1 — same
-// security posture as the arb-scanner Flask dashboard: never exposed beyond
-// this machine. Keypair files are read/written from disk on THIS machine by
-// THIS process; private keys never cross a network boundary.
+// Local-only dashboard for launching and managing a token. Binds to
+// 127.0.0.1 — same security posture as the arb-scanner Flask dashboard:
+// never exposed beyond this machine. Keypair files are read/written from
+// disk on THIS machine by THIS process; private keys never cross a network
+// boundary and never enter SQLite (only public addresses/paths do).
 
 import express from "express";
 import multer from "multer";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { PublicKey } from "@solana/web3.js";
 import "dotenv/config";
 import {
   launchToken,
@@ -25,9 +25,9 @@ import {
   labeledWalletPath,
 } from "./wallet.js";
 import { buildAndUploadMetadata } from "./metadata.js";
-import { distributeToOperatorWallets } from "./distribute.js";
-import { newLaunchId, launchDir, saveLaunchManifest } from "./launchManifest.js";
 import { consoleApiRouter } from "./consoleApi.js";
+import { projectApiRouter } from "./projectApi.js";
+import * as store from "./db/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -43,6 +43,7 @@ const upload = multer({ dest: UPLOADS_DIR, limits: { fileSize: 10 * 1024 * 1024 
 app.use(express.json());
 app.use(express.static(path.join(ROOT, "public")));
 app.use("/api/console", consoleApiRouter(ROOT));
+app.use("/api/projects", projectApiRouter(ROOT));
 
 const MAINNET_CONFIRM_PHRASE = "LAUNCH MAINNET";
 const MIN_MAINNET_SOL = ESTIMATED_LAUNCH_COST_SOL;
@@ -58,7 +59,7 @@ app.get("/api/config", (_req, res) => {
 app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
   const {
     network,
-    walletMode, // "new" (default) or "existing"
+    walletMode, // "new" (default) or "existing" — applies to the owner/mint-authority wallet
     keypairPath,
     name,
     symbol,
@@ -102,10 +103,14 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
     }
   }
 
-  const resolvedKeypairPath =
-    walletMode === "existing" ? keypairPath || DEFAULT_KEYPAIR_PATH : newWalletPath(symbol, WALLETS_DIR);
+  // Project row exists before anything else so every subsequent step has
+  // somewhere to record itself, even if a later step fails.
+  const projectId = store.createProject(ROOT, { name, symbol, network });
+  store.setState(ROOT, projectId, "PROJECT_CREATED", "Project created");
+  const projectWalletsDir = path.join(WALLETS_DIR, projectId);
 
-  const launchId = newLaunchId(symbol);
+  const resolvedKeypairPath =
+    walletMode === "existing" ? keypairPath || DEFAULT_KEYPAIR_PATH : newWalletPath(symbol, projectWalletsDir);
 
   try {
     let walletInfo;
@@ -129,10 +134,7 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
       }
       walletInfo = { path: resolved, created, address: keypair.publicKey.toBase58(), balance, keypair };
     } else {
-      // Devnet: create the wallet if missing and top it up with free test
-      // SOL automatically if the balance is low. No real money involved.
-      const { path: resolved, created, balance, airdropped, keypair } =
-        await ensureFundedDevnetWallet(resolvedKeypairPath);
+      const { path: resolved, created, balance, airdropped, keypair } = await ensureFundedDevnetWallet(resolvedKeypairPath);
       walletInfo = { path: resolved, created, airdropped, address: keypair.publicKey.toBase58(), balance, keypair };
     }
 
@@ -154,9 +156,6 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
           imagePath: req.file ? req.file.path : null,
         });
       } catch (metaErr) {
-        // Don't fail the whole launch over a metadata hosting problem —
-        // report it and continue with no image/description rather than
-        // lose the mint over a storage hiccup.
         metadataNote = `Metadata/thumbnail upload failed, launching without it: ${metaErr.message || metaErr}`;
       }
     }
@@ -174,58 +173,79 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
 
     cleanupUpload();
 
-    // Operator wallets: create each, then distribute the configured
-    // percentage of supply to it. Every one of these is created by and
-    // stays under the control of whoever ran this launch — same operator,
-    // separated funds. Failure here doesn't undo the mint that already
-    // happened; it's reported alongside whatever succeeded.
-    let operatorResults = [];
-    let distributionNote = null;
-    if (operatorWalletConfigs.length > 0) {
-      try {
-        const opWalletsDir = path.join(launchDir(ROOT, launchId), "wallets");
-        const preparedWallets = operatorWalletConfigs.map((w, i) => {
-          const wPath = labeledWalletPath(w.label || `wallet-${i + 1}`, opWalletsDir);
-          const { keypair } = loadOrCreateKeypair(wPath);
-          return { id: `op${i + 1}`, label: w.label || `Wallet ${i + 1}`, percent: Number(w.percent), path: wPath, keypair };
-        });
-
-        operatorResults = await distributeToOperatorWallets({
-          network,
-          ownerKeypair: walletInfo.keypair,
-          mintAddress: new PublicKey(result.mintAddress),
-          decimals: Number(decimals ?? 6),
-          totalSupply: supply,
-          operatorWallets: preparedWallets,
-        });
-        const failed = operatorResults.filter((r) => r.ok === false);
-        if (failed.length > 0) {
-          distributionNote = `${failed.length} of ${operatorResults.length} operator wallet transfers failed: ${failed
-            .map((f) => `${f.label} (${f.error})`)
-            .join("; ")}`;
-        }
-      } catch (distErr) {
-        distributionNote = `Operator wallet distribution failed or partially completed: ${distErr.message || distErr}`;
-      }
-    }
-
-    saveLaunchManifest(ROOT, launchId, {
-      name,
-      symbol,
-      network,
+    store.updateProjectMint(ROOT, projectId, {
       mintAddress: result.mintAddress,
       decimals: Number(decimals ?? 6),
-      supply: String(supply),
-      createdAt: new Date().toISOString(),
-      ownerWallet: { path: walletInfo.path, address: walletInfo.address, label: "Owner (mint authority origin)" },
-      operatorWallets: operatorResults.map((r) => ({
-        id: r.id,
-        label: r.label,
-        percent: r.percent,
-        address: r.address,
-        path: r.path,
-        funded: r.ok !== false,
-      })),
+      supply,
+      metadataUri,
+    });
+    store.setState(ROOT, projectId, "TOKEN_CREATED", `Mint ${result.mintAddress}`);
+    store.recordTransaction(ROOT, {
+      projectId,
+      type: "MINT",
+      outputAsset: symbol,
+      outputAmount: supply,
+      destination: walletInfo.address,
+      signature: null,
+      network,
+      status: "confirmed",
+    });
+
+    const ownerWalletId = store.addWallet(ROOT, {
+      projectId,
+      role: "owner",
+      label: "Owner (mint authority origin)",
+      address: walletInfo.address,
+      keypairPath: walletInfo.path,
+    });
+
+    // Funding wallet: receives SOL from the operator's external wallet,
+    // later performs the real market buy (Phase 2). Main Holding wallet:
+    // receives the acquired token and distributes it to operator wallets.
+    // Both created now so they exist and are visible/fundable immediately,
+    // even though the funding-swap itself isn't wired until Phase 2.
+    const fundingResult =
+      network === "devnet"
+        ? await ensureFundedDevnetWallet(labeledWalletPath("funding", projectWalletsDir), 0.05)
+        : loadOrCreateKeypair(labeledWalletPath("funding", projectWalletsDir));
+    const fundingWalletId = store.addWallet(ROOT, {
+      projectId,
+      role: "funding",
+      label: "Funding wallet",
+      address: fundingResult.keypair.publicKey.toBase58(),
+      keypairPath: fundingResult.path,
+    });
+
+    const mainHoldingResult =
+      network === "devnet"
+        ? await ensureFundedDevnetWallet(labeledWalletPath("main-holding", projectWalletsDir), 0.05)
+        : loadOrCreateKeypair(labeledWalletPath("main-holding", projectWalletsDir));
+    const mainHoldingWalletId = store.addWallet(ROOT, {
+      projectId,
+      role: "main_holding",
+      label: "Main Holding wallet",
+      address: mainHoldingResult.keypair.publicKey.toBase58(),
+      keypairPath: mainHoldingResult.path,
+    });
+
+    // Operator wallets are created now (so they exist, have addresses, and
+    // can be shown/configured immediately) but are NOT funded here.
+    // Funding them is the separate, hardened Distribution action
+    // (POST /api/projects/:id/distribute) run against Main Holding's real
+    // balance once it has one — not baked into the launch call.
+    const operatorWallets = operatorWalletConfigs.map((w, i) => {
+      const label = w.label || `Wallet ${i + 1}`;
+      const wPath = labeledWalletPath(label, projectWalletsDir);
+      const { keypair } = loadOrCreateKeypair(wPath);
+      const walletId = store.addWallet(ROOT, {
+        projectId,
+        role: "operator",
+        label,
+        address: keypair.publicKey.toBase58(),
+        keypairPath: wPath,
+        allocationPercent: Number(w.percent),
+      });
+      return { id: walletId, label, percent: Number(w.percent), address: keypair.publicKey.toBase58() };
     });
 
     res.json({
@@ -233,12 +253,15 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
       ...result,
       metadataUri,
       metadataNote,
-      wallet: { path: walletInfo.path, created: walletInfo.created, airdropped: walletInfo.airdropped },
+      projectId,
+      overviewUrl: `/overview.html?project=${projectId}`,
+      wallets: {
+        owner: { id: ownerWalletId, address: walletInfo.address, created: walletInfo.created, airdropped: walletInfo.airdropped },
+        funding: { id: fundingWalletId, address: fundingResult.keypair.publicKey.toBase58() },
+        mainHolding: { id: mainHoldingWalletId, address: mainHoldingResult.keypair.publicKey.toBase58() },
+        operators: operatorWallets,
+      },
       raydiumCreatePoolUrl: raydiumCreatePoolUrl(result.mintAddress),
-      launchId,
-      consoleUrl: `/console.html?launch=${launchId}`,
-      operatorWallets: operatorResults,
-      distributionNote,
     });
   } catch (err) {
     cleanupUpload();
@@ -249,6 +272,6 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
 
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`Coin launcher dashboard: http://127.0.0.1:${PORT}`);
-  console.log(`Wallet console: http://127.0.0.1:${PORT}/console.html`);
+  console.log(`Overview: http://127.0.0.1:${PORT}/overview.html`);
   console.log("Bound to 127.0.0.1 only — not reachable from other machines.");
 });

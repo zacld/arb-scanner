@@ -14,6 +14,7 @@
   .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0; border-bottom: 1px solid #8883; padding-bottom: 8px; }
   .tab { padding: 8px 14px; border-radius: 8px 8px 0 0; border: 1px solid #8886; border-bottom: none; background: transparent; color: inherit; cursor: pointer; font-size: 0.9rem; }
   .tab.active { background: #6c5ce7; border-color: #6c5ce7; color: white; font-weight: 600; }
+  .tab .role { display: block; font-size: 0.7rem; opacity: 0.7; }
   .panel { display: none; }
   .panel.active { display: block; }
   section { border: 1px solid #8883; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
@@ -42,20 +43,24 @@
 </style>
 </head>
 <body>
-  <h1>🔑 Wallet Console</h1>
-  <div class="sub">Every wallet shown here is created and controlled by whoever ran the launch — not independent holders.</div>
+  <h1>🔑 Wallets</h1>
+  <div class="sub">Every wallet shown here is created and controlled by the same operator — not independent holders.</div>
 
   <div>
-    <select id="launchSelect"></select>
+    <select id="projectSelect"></select>
   </div>
 
   <div id="app"></div>
 
+<script src="nav.js"></script>
 <script>
   const params = new URLSearchParams(location.search);
-  let currentLaunch = null; // manifest
-  let currentLaunchId = params.get("launch") || null;
-  let currentWalletId = "owner";
+  let currentProject = null; // { project, wallets }
+  let currentProjectId = params.get("project") || params.get("launch") || null;
+  let currentWalletId = null;
+
+  const ROLE_ORDER = { owner: 0, funding: 1, main_holding: 2, operator: 3 };
+  const ROLE_LABEL = { owner: "Owner", funding: "Funding", main_holding: "Main Holding", operator: "Operator" };
 
   async function api(path, opts) {
     const res = await fetch(path, opts);
@@ -69,53 +74,54 @@
     return Number.isFinite(num) ? num.toLocaleString(undefined, { maximumFractionDigits: decimals }) : n;
   }
 
-  async function loadLaunches() {
-    const { launches } = await api("/api/console/launches");
-    const select = document.getElementById("launchSelect");
-    if (launches.length === 0) {
-      document.getElementById("app").innerHTML = `<div class="empty">No coins launched yet. Launch one from the main dashboard first.</div>`;
+  async function loadProjects() {
+    const { projects } = await api("/api/projects");
+    const select = document.getElementById("projectSelect");
+    if (projects.length === 0) {
+      document.getElementById("app").innerHTML = `<div class="empty">No coins launched yet. Launch one from the Launch tab first.</div>`;
       select.style.display = "none";
       return;
     }
     select.style.display = "";
-    select.innerHTML = launches
-      .map((l) => `<option value="${l.id}">${l.name} (${l.symbol}) — ${l.network} — ${l.walletCount} wallets</option>`)
+    select.innerHTML = projects
+      .map((p) => `<option value="${p.id}">${p.name} (${p.symbol}) — ${p.network} — ${p.walletCount} wallets</option>`)
       .join("");
-    if (!currentLaunchId || !launches.find((l) => l.id === currentLaunchId)) {
-      currentLaunchId = launches[0].id;
+    if (!currentProjectId || !projects.find((p) => p.id === currentProjectId)) {
+      currentProjectId = projects[0].id;
     }
-    select.value = currentLaunchId;
+    select.value = currentProjectId;
     select.addEventListener("change", () => {
-      currentLaunchId = select.value;
-      currentWalletId = "owner";
-      loadLaunch();
+      currentProjectId = select.value;
+      currentWalletId = null;
+      loadProject();
     });
-    await loadLaunch();
+    await loadProject();
   }
 
-  async function loadLaunch() {
-    const { manifest } = await api(`/api/console/launches/${currentLaunchId}`);
-    currentLaunch = manifest;
+  async function loadProject() {
+    const data = await api(`/api/projects/${currentProjectId}`);
+    currentProject = data;
     renderShell();
   }
 
   function allWallets() {
-    return [
-      { id: "owner", label: currentLaunch.ownerWallet.label || "Owner", address: currentLaunch.ownerWallet.address },
-      ...(currentLaunch.operatorWallets || []).map((w) => ({ id: w.id, label: w.label, address: w.address, funded: w.funded })),
-    ];
+    return [...currentProject.wallets].sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9));
+  }
+
+  function tabLabel(w) {
+    return `${w.label}<span class="role">${ROLE_LABEL[w.role] || w.role}</span>`;
   }
 
   function renderShell() {
     const wallets = allWallets();
-    if (!wallets.find((w) => w.id === currentWalletId)) currentWalletId = "owner";
+    if (!wallets.find((w) => w.id === currentWalletId)) currentWalletId = wallets[0]?.id;
 
     const app = document.getElementById("app");
     app.innerHTML = `
       <div class="banner">
         ⚠️ <strong>${wallets.length} wallets shown below are all commonly controlled by the same operator</strong>
-        (${currentLaunch.name} / ${currentLaunch.symbol} launch) — they are not independent holders, and should be
-        identified as such wherever this project is discussed publicly.
+        (${currentProject.project.name} / ${currentProject.project.symbol}) — they are not independent holders, and
+        should be identified as such wherever this project is discussed publicly.
       </div>
       <div class="tabs" id="tabs"></div>
       <div id="panels"></div>
@@ -123,7 +129,7 @@
 
     const tabs = document.getElementById("tabs");
     tabs.innerHTML = wallets
-      .map((w) => `<button class="tab ${w.id === currentWalletId ? "active" : ""}" data-wallet="${w.id}">${w.label}</button>`)
+      .map((w) => `<button class="tab ${w.id === currentWalletId ? "active" : ""}" data-wallet="${w.id}">${tabLabel(w)}</button>`)
       .join("");
     tabs.querySelectorAll(".tab").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -132,6 +138,7 @@
       });
     });
 
+    if (!currentWalletId) return;
     const panels = document.getElementById("panels");
     panels.innerHTML = `<div class="panel active" id="panel-${currentWalletId}"></div>`;
     renderWalletPanel(currentWalletId);
@@ -140,7 +147,8 @@
   function renderWalletPanel(walletId) {
     const wallet = allWallets().find((w) => w.id === walletId);
     const panel = document.getElementById(`panel-${walletId}`);
-    const isMainnet = currentLaunch.network === "mainnet-beta";
+    const project = currentProject.project;
+    const isMainnet = project.network === "mainnet-beta";
 
     panel.innerHTML = `
       <section>
@@ -149,7 +157,7 @@
           <code class="addr">${wallet.address}</code>
           <button class="secondary" id="copyBtn">Copy</button>
         </div>
-        <img class="qr" src="/api/console/launches/${currentLaunchId}/wallets/${walletId}/qrcode.png" alt="QR code" />
+        <img class="qr" src="/api/console/projects/${currentProjectId}/wallets/${walletId}/qrcode.png" alt="QR code" />
       </section>
 
       <section>
@@ -159,12 +167,13 @@
 
       <section>
         <h2>Send</h2>
+        <div class="hint" style="color:#888;font-size:0.8rem;">Sending to another wallet in this project is recorded as a TRANSFER; sending anywhere else is recorded as a WITHDRAWAL.</div>
         <form class="inline" id="sendForm">
           <div>
             <label>Asset</label>
             <select name="assetType">
               <option value="SOL">SOL</option>
-              <option value="TOKEN">${currentLaunch.symbol}</option>
+              <option value="TOKEN">${project.symbol}</option>
             </select>
           </div>
           <div>
@@ -187,8 +196,8 @@
             <div>
               <label>Direction</label>
               <select name="direction">
-                <option value="SOL_TO_TOKEN">SOL → ${currentLaunch.symbol}</option>
-                <option value="TOKEN_TO_SOL">${currentLaunch.symbol} → SOL</option>
+                <option value="SOL_TO_TOKEN">SOL → ${project.symbol}</option>
+                <option value="TOKEN_TO_SOL">${project.symbol} → SOL</option>
               </select>
             </div>
             <div>
@@ -215,9 +224,7 @@
     });
 
     document.getElementById("refreshBtn").addEventListener("click", () => { loadBalance(walletId); loadHistory(walletId); });
-
     document.getElementById("sendForm").addEventListener("submit", (e) => onSend(e, walletId));
-
     if (isMainnet) {
       document.getElementById("swapQuoteForm").addEventListener("submit", (e) => onSwapQuote(e, walletId));
     }
@@ -230,7 +237,7 @@
     const box = document.getElementById("balanceBox");
     if (!box) return;
     try {
-      const data = await api(`/api/console/launches/${currentLaunchId}/wallets/${walletId}/balance`);
+      const data = await api(`/api/console/projects/${currentProjectId}/wallets/${walletId}/balance`);
       box.innerHTML = `
         <div class="balances">
           <div class="stat"><b>${fmt(data.sol)} SOL</b><span>native balance</span></div>
@@ -246,7 +253,7 @@
     const box = document.getElementById("historyBox");
     if (!box) return;
     try {
-      const data = await api(`/api/console/launches/${currentLaunchId}/wallets/${walletId}/history`);
+      const data = await api(`/api/console/projects/${currentProjectId}/wallets/${walletId}/history`);
       if (data.transactions.length === 0) {
         box.innerHTML = `<div class="hint" style="color:#888;">No transactions yet.</div>`;
         return;
@@ -281,7 +288,7 @@
     btn.disabled = true;
     msgBox.innerHTML = "";
     try {
-      const data = await api(`/api/console/launches/${currentLaunchId}/wallets/${walletId}/send`, {
+      const data = await api(`/api/console/projects/${currentProjectId}/wallets/${walletId}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -304,15 +311,16 @@
     const fd = new FormData(form);
     const direction = fd.get("direction");
     const amount = fd.get("amount");
+    const project = currentProject.project;
     box.innerHTML = "Fetching quote…";
     try {
-      const { quote } = await api(`/api/console/launches/${currentLaunchId}/wallets/${walletId}/swap/quote`, {
+      const { quote } = await api(`/api/console/projects/${currentProjectId}/wallets/${walletId}/swap/quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ direction, amount }),
       });
-      const outSymbol = direction === "SOL_TO_TOKEN" ? currentLaunch.symbol : "SOL";
-      const outDecimals = direction === "SOL_TO_TOKEN" ? currentLaunch.decimals : 9;
+      const outSymbol = direction === "SOL_TO_TOKEN" ? project.symbol : "SOL";
+      const outDecimals = direction === "SOL_TO_TOKEN" ? project.decimals : 9;
       const outAmount = Number(quote.outAmount) / 10 ** outDecimals;
       box.innerHTML = `
         <div class="msg" style="background:#8881;border:1px solid #8886;">
@@ -323,7 +331,7 @@
       document.getElementById("confirmSwapBtn").addEventListener("click", async () => {
         box.innerHTML = "Submitting swap…";
         try {
-          const result = await api(`/api/console/launches/${currentLaunchId}/wallets/${walletId}/swap/execute`, {
+          const result = await api(`/api/console/projects/${currentProjectId}/wallets/${walletId}/swap/execute`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ quoteResponse: quote }),
@@ -340,7 +348,7 @@
     }
   }
 
-  loadLaunches().catch((err) => {
+  loadProjects().catch((err) => {
     document.getElementById("app").innerHTML = `<div class="msg err">${err.message}</div>`;
   });
 </script>

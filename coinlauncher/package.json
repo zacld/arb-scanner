@@ -7,6 +7,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "test": "node --test test/*.test.js",
     "cli": "node src/cli.js",
     "wallet:new": "node src/wallet-setup.js new",
     "wallet:airdrop": "node src/wallet-setup.js airdrop",

@@ -34,8 +34,9 @@
 </style>
 </head>
 <body>
-  <h1>🪙 Coin Launcher</h1>
-  <div class="sub">Single owner, single wallet per coin, no hidden distribution. Devnet by default.</div>
+  <script src="nav.js"></script>
+  <h1>🪙 Launch</h1>
+  <div class="sub">Single owner, dedicated Funding/Main Holding/Operator wallets per coin, no hidden distribution. Devnet by default.</div>
 
   <form id="launchForm">
     <fieldset>
@@ -234,11 +235,12 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Launch failed");
 
-      const wallet = data.wallet || {};
-      const walletNote = wallet.created
-        ? `Wallet created at <code>${wallet.path}</code> (new — this is your key file now, back it up).`
-        : `Using existing wallet at <code>${wallet.path}</code>.`;
-      const airdropNote = wallet.airdropped ? ` Topped up with devnet test SOL automatically.` : "";
+      const wallets = data.wallets || {};
+      const owner = wallets.owner || {};
+      const walletNote = owner.created
+        ? `Owner wallet created (new — the key file is now your only copy, back it up).`
+        : `Using existing owner wallet.`;
+      const airdropNote = owner.airdropped ? ` Topped up with devnet test SOL automatically.` : "";
       const metadataNoteHtml = data.metadataNote
         ? `<div style="margin-top:6px;color:#e7a640;">⚠️ ${data.metadataNote}</div>`
         : "";
@@ -246,36 +248,35 @@
         ? `Metadata: <a href="${data.metadataUri}" target="_blank" rel="noopener">${data.metadataUri}</a><br/>`
         : "";
 
-      const opWalletsList = (data.operatorWallets || []).map((w) =>
-        `<li>${w.label}: ${w.percent}% → <code>${w.address}</code> ${w.ok === false ? "❌ transfer failed: " + (w.error || "") : "✅"}</li>`
+      const opWalletsList = (wallets.operators || []).map((w) =>
+        `<li>${w.label}: ${w.percent}% target → <code>${w.address}</code></li>`
       ).join("");
       const opWalletsHtml = opWalletsList
         ? `<div style="margin-top:8px;">
-             <strong>Operator wallets</strong> (commonly controlled by you, not independent holders):
+             <strong>Operator wallets created</strong> (commonly controlled by you, not independent holders) —
+             not funded yet. Fund Main Holding, then run Distribution from the Overview tab.
              <ul style="margin:4px 0 0 0;padding-left:20px;">${opWalletsList}</ul>
-             <a href="${data.consoleUrl}" target="_blank" rel="noopener">Open wallet console →</a>
            </div>`
-        : "";
-      const distributionNoteHtml = data.distributionNote
-        ? `<div style="margin-top:6px;color:#e7a640;">⚠️ ${data.distributionNote}</div>`
         : "";
 
       resultBox.style.display = "block";
       resultBox.innerHTML = `
         <strong>✅ Token launched on ${data.network}</strong><br/>
         Mint address: <code>${data.mintAddress}</code><br/>
-        Owner wallet: <code>${data.ownerAddress}</code><br/>
+        Owner wallet: <code>${owner.address || ""}</code><br/>
+        Funding wallet: <code>${(wallets.funding || {}).address || ""}</code><br/>
+        Main Holding wallet: <code>${(wallets.mainHolding || {}).address || ""}</code><br/>
         Authorities revoked: ${data.authoritiesRevoked ? "yes" : "no"}<br/>
         ${metadataLine}
         <a href="${data.explorerUrl}" target="_blank" rel="noopener">View on Solscan →</a><br/>
-        <a href="${data.raydiumCreatePoolUrl}" target="_blank" rel="noopener">Create liquidity pool on Raydium →</a>
+        <a href="${data.raydiumCreatePoolUrl}" target="_blank" rel="noopener">Create liquidity pool on Raydium →</a><br/>
+        <a href="${data.overviewUrl}">Open Overview →</a>
         <div style="margin-top:8px;font-size:0.85em;color:#888;">
           ${walletNote}${airdropNote}<br/>
           Liquidity is a separate step you drive yourself, with your own wallet, on Raydium's own site.
         </div>
         ${opWalletsHtml}
         ${metadataNoteHtml}
-        ${distributionNoteHtml}
       `;
     } catch (err) {
       errorBox.style.display = "block";

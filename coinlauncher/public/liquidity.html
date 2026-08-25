@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Liquidity</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 1.3rem; margin-bottom: 0; }
+  .sub { color: #888; margin-top: 4px; margin-bottom: 16px; }
+  select { padding: 8px; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; font-family: inherit; }
+  section { border: 1px solid #8883; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  section h2 { font-size: 1rem; margin: 0 0 10px 0; }
+  .status { padding: 10px 12px; border-radius: 8px; font-size: 0.9rem; }
+  .status.unavailable { background: #8881; color: #888; }
+  code { font-size: 0.85em; }
+  .empty { color: #888; text-align: center; padding: 40px 0; }
+</style>
+</head>
+<body>
+  <script src="nav.js"></script>
+  <h1>💧 Liquidity</h1>
+  <div class="sub">Pool status and supply breakdown for one project at a time.</div>
+
+  <div><select id="projectSelect"></select></div>
+  <div id="app"></div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  let currentProjectId = params.get("project") || null;
+
+  async function api(path) {
+    const res = await fetch(path);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  async function loadProjects() {
+    const { projects } = await api("/api/projects");
+    const select = document.getElementById("projectSelect");
+    if (projects.length === 0) {
+      document.getElementById("app").innerHTML = `<div class="empty">No coins launched yet. <a href="index.html">Launch one →</a></div>`;
+      select.style.display = "none";
+      return;
+    }
+    select.style.display = "";
+    select.innerHTML = projects.map((p) => `<option value="${p.id}">${p.name} (${p.symbol}) — ${p.network}</option>`).join("");
+    if (!currentProjectId || !projects.find((p) => p.id === currentProjectId)) currentProjectId = projects[0].id;
+    select.value = currentProjectId;
+    select.addEventListener("change", () => { currentProjectId = select.value; render(); });
+    await render();
+  }
+
+  async function render() {
+    const app = document.getElementById("app");
+    try {
+      const [{ project }, stateData] = await Promise.all([
+        api(`/api/projects/${currentProjectId}`),
+        api(`/api/projects/${currentProjectId}/state`),
+      ]);
+      const m = stateData.milestones;
+
+      app.innerHTML = `
+        <section>
+          <h2>Supply</h2>
+          <div>Mint: <code>${project.mint_address || "not minted yet"}</code></div>
+          <div>Total supply: ${project.supply ? Number(project.supply).toLocaleString() : "—"} ${project.symbol}</div>
+          <div style="margin-top:8px;font-size:0.85rem;color:#888;">
+            Liquidity allocation, operator-controlled tokens, and market-held tokens will be broken out here
+            once pool creation and route-checking are wired up (Phase 2) — shown from real on-chain balances,
+            never invented.
+          </div>
+        </section>
+
+        <section>
+          <h2>Pool status</h2>
+          <div class="status unavailable">${m.LIQUIDITY_CREATED.note || "Not created."}</div>
+        </section>
+
+        <section>
+          <h2>Route status</h2>
+          <div class="status unavailable">${m.ROUTE_CONFIRMED.note || "No route checked."}</div>
+        </section>
+
+        <section>
+          <h2>What's here vs. Phase 2</h2>
+          <div style="font-size:0.9rem;">
+            This tool won't create a pool for you automatically — that's real fund-custody logic best left to
+            Raydium's own audited UI. Phase 2 adds: creating the pool yourself on Raydium, confirming the pool
+            address back here, and a live route check (via Jupiter) that gates whether a real swap can run.
+            Until then this section stays honest about not having liquidity, rather than faking it.
+          </div>
+          <a href="index.html" style="display:inline-block;margin-top:8px;">Create pool on Raydium (from the Launch result) →</a>
+        </section>
+      `;
+    } catch (err) {
+      app.innerHTML = `<div class="status unavailable">${err.message}</div>`;
+    }
+  }
+
+  loadProjects().catch((err) => {
+    document.getElementById("app").innerHTML = `<div class="status unavailable">${err.message}</div>`;
+  });
+</script>
+</body>
+</html>

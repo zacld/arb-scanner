@@ -13,6 +13,50 @@ any social media account. Liquidity is a separate step you do yourself on
 Raydium's own site. A social link is optional metadata you attach to an
 account you already own — this tool never signs up for one on your behalf.
 
+## Architecture (Phase 1)
+
+The dashboard is now organized around **projects**, each with a role-tagged
+set of wallets and a persisted launch state, stored in a local SQLite
+database (`coinlauncher/data/coinlauncher.db`, via Node's built-in
+`node:sqlite` — no native module to compile). Pages:
+
+- **Launch** (`index.html`) — configure and mint a token; creates the
+  project plus its Owner, Funding, and Main Holding wallets, and any
+  operator wallets you configure (created, not yet funded).
+- **Overview** (`overview.html`) — token info, all wallets, the 12-state
+  launch progress ladder, the Distribution action, and the transaction
+  audit trail.
+- **Liquidity** (`liquidity.html`) — pool/route status. Honest placeholder
+  in Phase 1 — see below.
+- **Wallets** (`console.html`) — one tab per wallet (Owner/Funding/Main
+  Holding/each operator), each with Receive (address + QR), Balance, Send,
+  Swap (mainnet only), and transaction history.
+- **Trading**, **Analytics**, **Socials** — placeholders describing what's
+  there now vs. planned.
+
+**Wallet roles:** `owner` (holds mint authority origin), `funding`
+(receives your external SOL, will perform the real market buy in Phase 2),
+`main_holding` (distribution hub), `operator` (Wallets 1-N, commonly
+controlled, never presented as independent holders).
+
+**Distribution** (Main Holding → operator wallets) is hardened per the
+Phase 1 spec: percentages apply to Main Holding's *real* on-chain balance
+at run time (not an assumed total), an idempotency ledger means a crash
+mid-run resumes instead of restarting blindly, every attempt is written to
+the audit trail as it happens, and `DISTRIBUTION_COMPLETE` is only ever set
+once every wallet's transfer has actually confirmed on-chain. Run it from
+the Overview tab.
+
+**What's real vs. placeholder in Phase 1:** `PROJECT_CREATED` and
+`TOKEN_CREATED` are explicit (set when they actually happen).
+`FUNDING_RECEIVED` and `MAIN_WALLET_FUNDED` are derived live from real
+on-chain balances every time you check. `DISTRIBUTION_PENDING`/`COMPLETE`
+are real, hardened, tested actions. `LIQUIDITY_*`, `ROUTE_CONFIRMED`,
+`FUNDING_SWAP_*`, and `LAUNCH_ACTIVE` are modeled (visible in the progress
+ladder, explained honestly) but not implemented — that's the real
+market-swap/liquidity integration, which is Phase 2, and this build never
+fakes it.
+
 ## Setup
 
 ```bash
