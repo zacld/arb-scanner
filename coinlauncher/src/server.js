@@ -200,14 +200,12 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
     });
 
     // Funding wallet: receives SOL from the operator's external wallet,
-    // later performs the real market buy (Phase 2). Main Holding wallet:
-    // receives the acquired token and distributes it to operator wallets.
-    // Both created now so they exist and are visible/fundable immediately,
-    // even though the funding-swap itself isn't wired until Phase 2.
-    const fundingResult =
-      network === "devnet"
-        ? await ensureFundedDevnetWallet(labeledWalletPath("funding", projectWalletsDir), 0.05)
-        : loadOrCreateKeypair(labeledWalletPath("funding", projectWalletsDir));
+    // then performs the real market buy -- but that only ever runs on
+    // mainnet (Jupiter has no devnet liquidity to swap against), so on
+    // devnet this wallet's SOL balance is never actually used for
+    // anything. Just create it -- don't spend today's shared devnet
+    // faucet allowance on a balance nothing will touch.
+    const fundingResult = loadOrCreateKeypair(labeledWalletPath("funding", projectWalletsDir));
     const fundingWalletId = store.addWallet(ROOT, {
       projectId,
       role: "funding",
@@ -216,10 +214,12 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
       keypairPath: fundingResult.path,
     });
 
-    const mainHoldingResult =
-      network === "devnet"
-        ? await ensureFundedDevnetWallet(labeledWalletPath("main-holding", projectWalletsDir), 0.05)
-        : loadOrCreateKeypair(labeledWalletPath("main-holding", projectWalletsDir));
+    // Main Holding wallet: also just created here, not funded. It doesn't
+    // need SOL until it actually pays for a distribution -- that's when
+    // distributionService.js tops it up lazily on devnet, right when it's
+    // needed, instead of eagerly here whether or not this launch ever
+    // reaches that step.
+    const mainHoldingResult = loadOrCreateKeypair(labeledWalletPath("main-holding", projectWalletsDir));
     const mainHoldingWalletId = store.addWallet(ROOT, {
       projectId,
       role: "main_holding",

@@ -21,6 +21,7 @@ import fs from "fs";
 import { Keypair, Connection, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddress, TokenAccountNotFoundError } from "@solana/spl-token";
 import { RPC_ENDPOINTS } from "./createToken.js";
+import { ensureFundedDevnetWallet } from "./wallet.js";
 import { buildShareTransferTransaction } from "./distribute.js";
 import { submitAndTrack, assertWalletClearToTransact } from "./chainTx.js";
 import * as store from "./db/store.js";
@@ -100,7 +101,14 @@ export async function runDistribution(root, projectId, { allocations, force = fa
   // (confirmed, failed, or genuinely expired) and this passes silently.
   await assertWalletClearToTransact(root, { network: project.network, walletId: mainHolding.id });
 
-  const mainHoldingKeypair = loadKeypairFromPath(mainHolding.keypair_path);
+  // Main Holding pays for these distribution transactions itself, so it
+  // needs SOL right about now -- not eagerly at launch time, whether or
+  // not a distribution ever runs. Lazy top-up on devnet only; mainnet
+  // never auto-funds (that would mean creating real money).
+  const mainHoldingKeypair =
+    project.network === "devnet"
+      ? (await ensureFundedDevnetWallet(mainHolding.keypair_path)).keypair
+      : loadKeypairFromPath(mainHolding.keypair_path);
   const mintAddress = new PublicKey(project.mint_address);
   const sourceBalance = await getTokenBalanceBaseUnits(project.network, mintAddress, mainHoldingKeypair.publicKey);
 
