@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Coin Launcher</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 1.3rem; margin-bottom: 0; }
+  .sub { color: #888; margin-top: 4px; margin-bottom: 24px; }
+  fieldset { border: 1px solid #8883; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  legend { padding: 0 6px; font-weight: 600; }
+  label { display: block; margin-top: 10px; font-size: 0.9rem; }
+  input, select, textarea { width: 100%; box-sizing: border-box; padding: 8px; margin-top: 4px; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; }
+  button { padding: 10px 18px; border-radius: 8px; border: none; background: #6c5ce7; color: white; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .warn { background: #f39c1222; border: 1px solid #f39c12; border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 0.9rem; }
+  .danger { background: #e7404022; border: 1px solid #e74040; }
+  #mainnetBlock { display: none; }
+  #result { margin-top: 20px; padding: 16px; border-radius: 8px; background: #2ecc7122; border: 1px solid #2ecc71; display: none; word-break: break-all; }
+  #errorBox { margin-top: 20px; padding: 16px; border-radius: 8px; background: #e7404022; border: 1px solid #e74040; display: none; }
+  code { font-size: 0.85em; }
+</style>
+</head>
+<body>
+  <h1>🪙 Coin Launcher</h1>
+  <div class="sub">Single owner, single wallet, no hidden distribution. Devnet by default.</div>
+
+  <form id="launchForm">
+    <fieldset>
+      <legend>Token</legend>
+      <label>Name <input name="name" required placeholder="My Token" /></label>
+      <div class="row">
+        <div><label>Symbol <input name="symbol" required placeholder="MYTKN" maxlength="10" /></label></div>
+        <div><label>Decimals <input name="decimals" type="number" value="6" min="0" max="9" /></label></div>
+      </div>
+      <label>Total supply <input name="supply" type="number" required placeholder="1000000000" /></label>
+      <label>Metadata URI (optional — JSON with description/image, e.g. hosted on Arweave/IPFS)
+        <input name="uri" placeholder="https://..." />
+      </label>
+      <label><input type="checkbox" name="revokeAuthorities" checked style="width:auto;display:inline-block;margin-right:6px;" />
+        Revoke mint + freeze authority after mint (recommended — supply can never be inflated later)</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Wallet & network</legend>
+      <label>Local keypair file path (standard <code>solana-keygen</code> JSON, e.g. <code>~/.config/solana/id.json</code>)
+        <input name="keypairPath" required placeholder="/Users/you/.config/solana/id.json" />
+      </label>
+      <label>Network
+        <select name="network" id="network">
+          <option value="devnet" selected>devnet (test — no real money)</option>
+          <option value="mainnet-beta">mainnet-beta (real — costs real SOL, irreversible)</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <div id="mainnetBlock" class="warn danger">
+      <strong>This will submit a real transaction on Solana mainnet.</strong>
+      Estimated cost: <span id="estCost">~0.02 SOL</span> in network + rent fees.
+      Once submitted this cannot be undone. To proceed, type exactly
+      <code id="phraseHint">LAUNCH MAINNET</code> below:
+      <input name="mainnetConfirm" id="mainnetConfirm" placeholder="Type the confirmation phrase" />
+    </div>
+
+    <button type="submit" id="submitBtn">Launch token</button>
+  </form>
+
+  <div id="result"></div>
+  <div id="errorBox"></div>
+
+<script>
+  let CFG = { estimatedMainnetCostSol: 0.02, mainnetConfirmPhrase: "LAUNCH MAINNET" };
+  fetch("/api/config").then(r => r.json()).then(cfg => {
+    CFG = cfg;
+    document.getElementById("estCost").textContent = "~" + cfg.estimatedMainnetCostSol + " SOL";
+    document.getElementById("phraseHint").textContent = cfg.mainnetConfirmPhrase;
+  }).catch(() => {});
+
+  const networkSelect = document.getElementById("network");
+  const mainnetBlock = document.getElementById("mainnetBlock");
+  networkSelect.addEventListener("change", () => {
+    mainnetBlock.style.display = networkSelect.value === "mainnet-beta" ? "block" : "none";
+  });
+
+  const form = document.getElementById("launchForm");
+  const resultBox = document.getElementById("result");
+  const errorBox = document.getElementById("errorBox");
+  const submitBtn = document.getElementById("submitBtn");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    resultBox.style.display = "none";
+    errorBox.style.display = "none";
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Launching…";
+
+    const fd = new FormData(form);
+    const payload = {
+      name: fd.get("name"),
+      symbol: fd.get("symbol"),
+      decimals: fd.get("decimals"),
+      supply: fd.get("supply"),
+      uri: fd.get("uri"),
+      revokeAuthorities: fd.get("revokeAuthorities") === "on",
+      keypairPath: fd.get("keypairPath"),
+      network: fd.get("network"),
+      mainnetConfirm: fd.get("mainnetConfirm"),
+    };
+
+    try {
+      const res = await fetch("/api/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Launch failed");
+
+      resultBox.style.display = "block";
+      resultBox.innerHTML = `
+        <strong>✅ Token launched on ${data.network}</strong><br/>
+        Mint address: <code>${data.mintAddress}</code><br/>
+        Owner wallet: <code>${data.ownerAddress}</code><br/>
+        Authorities revoked: ${data.authoritiesRevoked ? "yes" : "no"}<br/>
+        <a href="${data.explorerUrl}" target="_blank" rel="noopener">View on Solscan →</a><br/>
+        <a href="${data.raydiumCreatePoolUrl}" target="_blank" rel="noopener">Create liquidity pool on Raydium →</a>
+        <div style="margin-top:8px;font-size:0.85em;color:#888;">
+          Liquidity is a separate step you drive yourself, with your own wallet, on Raydium's own site.
+        </div>
+      `;
+    } catch (err) {
+      errorBox.style.display = "block";
+      errorBox.textContent = "❌ " + err.message;
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Launch token";
+    }
+  });
+</script>
+</body>
+</html>
