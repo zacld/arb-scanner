@@ -94,6 +94,58 @@ account creation violates X's own Terms of Service and reads as exactly the
 kind of manufactured-legitimacy pattern that gets both the coin and the
 account flagged.
 
+## Operator wallets and the wallet console
+
+The "Operator wallets" section on the launch form lets you split the newly
+minted supply across several wallets right at launch — e.g. a wallet for LP
+reserve, one for marketing budget, one for treasury. Every one of them is:
+
+- **Created and controlled by you**, the same as the owner wallet — this is
+  internal fund organization for one operator, not distribution to third
+  parties.
+- **Clearly labeled as operator-controlled** everywhere it's shown (the
+  launch result, the console banner, every wallet tab) — never presented as
+  an independent holder.
+- **Configurable, not hard-coded** — add/remove rows, set your own labels
+  and percentages (must total 100% or less; anything left over stays in the
+  owner wallet).
+
+Leave every percentage at 0 (or remove all rows) to skip this and keep the
+full supply in the owner wallet, same as before this feature existed.
+
+**This is a wallet system, not a disclosure mechanism.** It doesn't publish
+anywhere that these wallets are related — that's a separate decision for
+you to make in how you describe the project publicly (a website, docs, a
+pinned post). The wallets being commonly controlled is a fact about how
+they were created; whether buyers know that fact depends on what you tell
+them, not on anything this tool does automatically.
+
+After a launch with operator wallets, open the **wallet console**
+(`/console.html`, or the link in the launch result) to manage them — pick a
+launch from the dropdown, click a wallet's tab to select it, and:
+
+- **Receive** — address, copy button, QR code.
+- **Balance** — SOL and token balance, refreshable.
+- **Send** — SOL or the token, to any address, from whichever wallet tab is
+  active (that's how you pick which wallet a transaction comes from).
+- **Swap** — mainnet only (devnet has no real liquidity to swap against),
+  via [Jupiter](https://jup.ag)'s public swap API. Get a quote, review it,
+  confirm to execute.
+- **Transaction history** — recent signatures for that wallet, linked to
+  Solscan.
+
+Every operator wallet also gets a small SOL top-up (0.01 SOL) at
+distribution time so it can pay its own transaction fees later.
+
+**Not verified against live Jupiter/Solana endpoints from this repo's build
+environment** — outbound network access was blocked there entirely, so
+balances/send/history/swap could only be verified up to that boundary
+(request parsing, validation, and wallet/manifest wiring all confirmed
+correct; the actual RPC and Jupiter calls could not be exercised). If swap
+specifically errors in a way that looks like a wrong endpoint rather than a
+normal failure (insufficient balance, no route, etc.), Jupiter may have
+moved their API — report the exact error and it's a quick fix.
+
 ## Or use the CLI directly
 
 ```bash

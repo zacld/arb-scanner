@@ -22,6 +22,12 @@ export function newWalletPath(symbol, walletsDir) {
   return path.join(walletsDir, `${slug}-${Date.now()}.json`);
 }
 
+/** Path for a fresh, arbitrarily-labeled wallet (e.g. an operator wallet within a launch). */
+export function labeledWalletPath(label, walletsDir) {
+  const slug = (label || "wallet").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "wallet";
+  return path.join(walletsDir, `${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`);
+}
+
 /** Load an existing keypair, or generate + save a new one if the file doesn't exist yet. */
 export function loadOrCreateKeypair(keypairPath) {
   const resolved = expandHome(keypairPath || DEFAULT_KEYPAIR_PATH);

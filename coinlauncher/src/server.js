@@ -8,6 +8,7 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { PublicKey } from "@solana/web3.js";
 import "dotenv/config";
 import {
   launchToken,
@@ -21,8 +22,12 @@ import {
   ensureFundedDevnetWallet,
   getBalanceSol,
   newWalletPath,
+  labeledWalletPath,
 } from "./wallet.js";
 import { buildAndUploadMetadata } from "./metadata.js";
+import { distributeToOperatorWallets } from "./distribute.js";
+import { newLaunchId, launchDir, saveLaunchManifest } from "./launchManifest.js";
+import { consoleApiRouter } from "./consoleApi.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
@@ -37,6 +42,7 @@ const upload = multer({ dest: UPLOADS_DIR, limits: { fileSize: 10 * 1024 * 1024 
 
 app.use(express.json());
 app.use(express.static(path.join(ROOT, "public")));
+app.use("/api/console", consoleApiRouter(ROOT));
 
 const MAINNET_CONFIRM_PHRASE = "LAUNCH MAINNET";
 const MIN_MAINNET_SOL = ESTIMATED_LAUNCH_COST_SOL;
@@ -63,6 +69,7 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
     supply,
     revokeAuthorities,
     mainnetConfirm,
+    operatorWallets: operatorWalletsRaw, // JSON string: [{ label, percent }, ...]
   } = req.body || {};
 
   const cleanupUpload = () => {
@@ -80,8 +87,25 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
     return res.status(400).json({ error: "name, symbol, and supply are required." });
   }
 
+  let operatorWalletConfigs = [];
+  if (operatorWalletsRaw) {
+    try {
+      operatorWalletConfigs = JSON.parse(operatorWalletsRaw).filter((w) => w && w.percent > 0);
+    } catch {
+      cleanupUpload();
+      return res.status(400).json({ error: "operatorWallets was not valid JSON." });
+    }
+    const totalPercent = operatorWalletConfigs.reduce((sum, w) => sum + Number(w.percent), 0);
+    if (totalPercent > 100) {
+      cleanupUpload();
+      return res.status(400).json({ error: `Operator wallet percentages add up to ${totalPercent}%, which is over 100%.` });
+    }
+  }
+
   const resolvedKeypairPath =
     walletMode === "existing" ? keypairPath || DEFAULT_KEYPAIR_PATH : newWalletPath(symbol, WALLETS_DIR);
+
+  const launchId = newLaunchId(symbol);
 
   try {
     let walletInfo;
@@ -150,6 +174,60 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
 
     cleanupUpload();
 
+    // Operator wallets: create each, then distribute the configured
+    // percentage of supply to it. Every one of these is created by and
+    // stays under the control of whoever ran this launch — same operator,
+    // separated funds. Failure here doesn't undo the mint that already
+    // happened; it's reported alongside whatever succeeded.
+    let operatorResults = [];
+    let distributionNote = null;
+    if (operatorWalletConfigs.length > 0) {
+      try {
+        const opWalletsDir = path.join(launchDir(ROOT, launchId), "wallets");
+        const preparedWallets = operatorWalletConfigs.map((w, i) => {
+          const wPath = labeledWalletPath(w.label || `wallet-${i + 1}`, opWalletsDir);
+          const { keypair } = loadOrCreateKeypair(wPath);
+          return { id: `op${i + 1}`, label: w.label || `Wallet ${i + 1}`, percent: Number(w.percent), path: wPath, keypair };
+        });
+
+        operatorResults = await distributeToOperatorWallets({
+          network,
+          ownerKeypair: walletInfo.keypair,
+          mintAddress: new PublicKey(result.mintAddress),
+          decimals: Number(decimals ?? 6),
+          totalSupply: supply,
+          operatorWallets: preparedWallets,
+        });
+        const failed = operatorResults.filter((r) => r.ok === false);
+        if (failed.length > 0) {
+          distributionNote = `${failed.length} of ${operatorResults.length} operator wallet transfers failed: ${failed
+            .map((f) => `${f.label} (${f.error})`)
+            .join("; ")}`;
+        }
+      } catch (distErr) {
+        distributionNote = `Operator wallet distribution failed or partially completed: ${distErr.message || distErr}`;
+      }
+    }
+
+    saveLaunchManifest(ROOT, launchId, {
+      name,
+      symbol,
+      network,
+      mintAddress: result.mintAddress,
+      decimals: Number(decimals ?? 6),
+      supply: String(supply),
+      createdAt: new Date().toISOString(),
+      ownerWallet: { path: walletInfo.path, address: walletInfo.address, label: "Owner (mint authority origin)" },
+      operatorWallets: operatorResults.map((r) => ({
+        id: r.id,
+        label: r.label,
+        percent: r.percent,
+        address: r.address,
+        path: r.path,
+        funded: r.ok !== false,
+      })),
+    });
+
     res.json({
       ok: true,
       ...result,
@@ -157,6 +235,10 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
       metadataNote,
       wallet: { path: walletInfo.path, created: walletInfo.created, airdropped: walletInfo.airdropped },
       raydiumCreatePoolUrl: raydiumCreatePoolUrl(result.mintAddress),
+      launchId,
+      consoleUrl: `/console.html?launch=${launchId}`,
+      operatorWallets: operatorResults,
+      distributionNote,
     });
   } catch (err) {
     cleanupUpload();
@@ -167,5 +249,6 @@ app.post("/api/launch", upload.single("thumbnail"), async (req, res) => {
 
 app.listen(PORT, "127.0.0.1", () => {
   console.log(`Coin launcher dashboard: http://127.0.0.1:${PORT}`);
+  console.log(`Wallet console: http://127.0.0.1:${PORT}/console.html`);
   console.log("Bound to 127.0.0.1 only — not reachable from other machines.");
 });
