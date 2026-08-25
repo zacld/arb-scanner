@@ -56,8 +56,9 @@
 
     <fieldset>
       <legend>Wallet & network</legend>
-      <label>Local keypair file path (standard <code>solana-keygen</code> JSON, e.g. <code>~/.config/solana/id.json</code>)
-        <input name="keypairPath" required placeholder="/Users/you/.config/solana/id.json" />
+      <label>Local keypair file path
+        <input name="keypairPath" id="keypairPath" />
+        <div class="hint">Pre-filled with the standard location. Created automatically if it doesn't exist yet — nothing to set up beforehand. On devnet it's also topped up with free test SOL automatically if the balance is low. On mainnet it's never auto-funded (that's real money — you send it yourself).</div>
       </label>
       <label>Network
         <select name="network" id="network">
@@ -82,11 +83,13 @@
   <div id="errorBox"></div>
 
 <script>
-  let CFG = { estimatedMainnetCostSol: 0.02, mainnetConfirmPhrase: "LAUNCH MAINNET" };
+  let CFG = { estimatedMainnetCostSol: 0.02, mainnetConfirmPhrase: "LAUNCH MAINNET", defaultKeypairPath: "~/.config/solana/id.json" };
   fetch("/api/config").then(r => r.json()).then(cfg => {
     CFG = cfg;
     document.getElementById("estCost").textContent = "~" + cfg.estimatedMainnetCostSol + " SOL";
     document.getElementById("phraseHint").textContent = cfg.mainnetConfirmPhrase;
+    const kpInput = document.getElementById("keypairPath");
+    if (!kpInput.value) kpInput.value = cfg.defaultKeypairPath;
   }).catch(() => {});
 
   const networkSelect = document.getElementById("network");
@@ -129,6 +132,12 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Launch failed");
 
+      const wallet = data.wallet || {};
+      const walletNote = wallet.created
+        ? `Wallet created at <code>${wallet.path}</code> (new — this is your key file now, back it up).`
+        : `Using existing wallet at <code>${wallet.path}</code>.`;
+      const airdropNote = wallet.airdropped ? ` Topped up with devnet test SOL automatically.` : "";
+
       resultBox.style.display = "block";
       resultBox.innerHTML = `
         <strong>✅ Token launched on ${data.network}</strong><br/>
@@ -138,6 +147,7 @@
         <a href="${data.explorerUrl}" target="_blank" rel="noopener">View on Solscan →</a><br/>
         <a href="${data.raydiumCreatePoolUrl}" target="_blank" rel="noopener">Create liquidity pool on Raydium →</a>
         <div style="margin-top:8px;font-size:0.85em;color:#888;">
+          ${walletNote}${airdropNote}<br/>
           Liquidity is a separate step you drive yourself, with your own wallet, on Raydium's own site.
         </div>
       `;
