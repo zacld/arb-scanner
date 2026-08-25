@@ -13,7 +13,8 @@
   legend { padding: 0 6px; font-weight: 600; }
   label { display: block; margin-top: 10px; font-size: 0.9rem; }
   .hint { color: #888; font-size: 0.8rem; font-weight: normal; margin-top: 3px; }
-  input, select, textarea { width: 100%; box-sizing: border-box; padding: 8px; margin-top: 4px; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; }
+  input, select, textarea { width: 100%; box-sizing: border-box; padding: 8px; margin-top: 4px; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; font-family: inherit; }
+  textarea { resize: vertical; min-height: 60px; }
   .row { display: flex; gap: 12px; }
   .row > div { flex: 1; }
   button { padding: 10px 18px; border-radius: 8px; border: none; background: #6c5ce7; color: white; font-weight: 600; cursor: pointer; }
@@ -21,6 +22,8 @@
   .warn { background: #f39c1222; border: 1px solid #f39c12; border-radius: 8px; padding: 12px; margin: 12px 0; font-size: 0.9rem; }
   .danger { background: #e7404022; border: 1px solid #e74040; }
   #mainnetBlock { display: none; }
+  #existingWalletBlock { display: none; }
+  #thumbPreview { max-width: 96px; max-height: 96px; border-radius: 8px; margin-top: 8px; display: none; }
   #result { margin-top: 20px; padding: 16px; border-radius: 8px; background: #2ecc7122; border: 1px solid #2ecc71; display: none; word-break: break-all; }
   #errorBox { margin-top: 20px; padding: 16px; border-radius: 8px; background: #e7404022; border: 1px solid #e74040; display: none; }
   code { font-size: 0.85em; }
@@ -28,7 +31,7 @@
 </head>
 <body>
   <h1>🪙 Coin Launcher</h1>
-  <div class="sub">Single owner, single wallet, no hidden distribution. Devnet by default.</div>
+  <div class="sub">Single owner, single wallet per coin, no hidden distribution. Devnet by default.</div>
 
   <form id="launchForm">
     <fieldset>
@@ -44,10 +47,6 @@
       <label>Total supply <input name="supply" type="number" value="1000000000" required />
         <div class="hint">1,000,000,000 — the common round total for a Solana token launch</div>
       </label>
-      <label>Metadata URI (optional — JSON with description/image, e.g. hosted on Arweave/IPFS)
-        <input name="uri" placeholder="https://..." />
-        <div class="hint">Leave blank to launch now; add later if you want an image/description to show in wallets</div>
-      </label>
       <label><input type="checkbox" name="revokeAuthorities" checked style="width:auto;display:inline-block;margin-right:6px;" />
         Revoke mint + freeze authority after mint
         <div class="hint">On by default — supply is locked forever, the standard signal that a launch isn't a mint-and-dump rug. Leave this on.</div>
@@ -55,11 +54,37 @@
     </fieldset>
 
     <fieldset>
-      <legend>Wallet & network</legend>
-      <label>Local keypair file path
-        <input name="keypairPath" id="keypairPath" />
-        <div class="hint">Pre-filled with the standard location. Created automatically if it doesn't exist yet — nothing to set up beforehand. On devnet it's also topped up with free test SOL automatically if the balance is low. On mainnet it's never auto-funded (that's real money — you send it yourself).</div>
+      <legend>Thumbnail & links</legend>
+      <label>Thumbnail image
+        <input type="file" name="thumbnail" id="thumbnail" accept="image/png,image/jpeg,image/gif,image/webp" />
+        <img id="thumbPreview" alt="preview" />
+        <div class="hint">Uploaded to permanent storage automatically and wired into the token's metadata — nothing to host yourself. Optional; skip on a devnet test run if you just want to check the flow.</div>
       </label>
+      <label>Description <textarea name="description" placeholder="What this coin is about"></textarea></label>
+      <label>Your X / Twitter link (optional)
+        <input name="twitterUrl" placeholder="https://x.com/yourhandle" />
+        <div class="hint">This must be an account you already own and are disclosing as the project's — this tool never creates or automates a social account for you.</div>
+      </label>
+      <label>Metadata URI override (optional, advanced)
+        <input name="uri" placeholder="https://... (only if you're hosting metadata yourself)" />
+        <div class="hint">Leave blank in almost all cases — filling in a thumbnail/description above builds and hosts this automatically.</div>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Wallet & network</legend>
+      <label>Wallet
+        <select name="walletMode" id="walletMode">
+          <option value="new" selected>Create a new wallet just for this coin (recommended)</option>
+          <option value="existing">Use an existing wallet</option>
+        </select>
+        <div class="hint">A dedicated wallet keeps each launch's funds and mint authority separate. Created automatically; on devnet it's also funded automatically.</div>
+      </label>
+      <div id="existingWalletBlock">
+        <label>Local keypair file path
+          <input name="keypairPath" id="keypairPath" />
+        </label>
+      </div>
       <label>Network
         <select name="network" id="network">
           <option value="devnet" selected>devnet (test — no real money)</option>
@@ -70,7 +95,8 @@
 
     <div id="mainnetBlock" class="warn danger">
       <strong>This will submit a real transaction on Solana mainnet.</strong>
-      Estimated cost: <span id="estCost">~0.02 SOL</span> in network + rent fees.
+      Estimated cost: <span id="estCost">~0.02 SOL</span> in network + rent fees
+      (plus a small amount more if you're uploading a thumbnail).
       Once submitted this cannot be undone. To proceed, type exactly
       <code id="phraseHint">LAUNCH MAINNET</code> below:
       <input name="mainnetConfirm" id="mainnetConfirm" placeholder="Type the confirmation phrase" />
@@ -98,6 +124,21 @@
     mainnetBlock.style.display = networkSelect.value === "mainnet-beta" ? "block" : "none";
   });
 
+  const walletModeSelect = document.getElementById("walletMode");
+  const existingWalletBlock = document.getElementById("existingWalletBlock");
+  walletModeSelect.addEventListener("change", () => {
+    existingWalletBlock.style.display = walletModeSelect.value === "existing" ? "block" : "none";
+  });
+
+  const thumbInput = document.getElementById("thumbnail");
+  const thumbPreview = document.getElementById("thumbPreview");
+  thumbInput.addEventListener("change", () => {
+    const file = thumbInput.files[0];
+    if (!file) { thumbPreview.style.display = "none"; return; }
+    thumbPreview.src = URL.createObjectURL(file);
+    thumbPreview.style.display = "block";
+  });
+
   const form = document.getElementById("launchForm");
   const resultBox = document.getElementById("result");
   const errorBox = document.getElementById("errorBox");
@@ -111,24 +152,11 @@
     submitBtn.textContent = "Launching…";
 
     const fd = new FormData(form);
-    const payload = {
-      name: fd.get("name"),
-      symbol: fd.get("symbol"),
-      decimals: fd.get("decimals"),
-      supply: fd.get("supply"),
-      uri: fd.get("uri"),
-      revokeAuthorities: fd.get("revokeAuthorities") === "on",
-      keypairPath: fd.get("keypairPath"),
-      network: fd.get("network"),
-      mainnetConfirm: fd.get("mainnetConfirm"),
-    };
+    fd.set("revokeAuthorities", fd.get("revokeAuthorities") === "on" ? "true" : "false");
+    if (walletModeSelect.value !== "existing") fd.delete("keypairPath");
 
     try {
-      const res = await fetch("/api/launch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const res = await fetch("/api/launch", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Launch failed");
 
@@ -137,6 +165,12 @@
         ? `Wallet created at <code>${wallet.path}</code> (new — this is your key file now, back it up).`
         : `Using existing wallet at <code>${wallet.path}</code>.`;
       const airdropNote = wallet.airdropped ? ` Topped up with devnet test SOL automatically.` : "";
+      const metadataNoteHtml = data.metadataNote
+        ? `<div style="margin-top:6px;color:#e7a640;">⚠️ ${data.metadataNote}</div>`
+        : "";
+      const metadataLine = data.metadataUri
+        ? `Metadata: <a href="${data.metadataUri}" target="_blank" rel="noopener">${data.metadataUri}</a><br/>`
+        : "";
 
       resultBox.style.display = "block";
       resultBox.innerHTML = `
@@ -144,12 +178,14 @@
         Mint address: <code>${data.mintAddress}</code><br/>
         Owner wallet: <code>${data.ownerAddress}</code><br/>
         Authorities revoked: ${data.authoritiesRevoked ? "yes" : "no"}<br/>
+        ${metadataLine}
         <a href="${data.explorerUrl}" target="_blank" rel="noopener">View on Solscan →</a><br/>
         <a href="${data.raydiumCreatePoolUrl}" target="_blank" rel="noopener">Create liquidity pool on Raydium →</a>
         <div style="margin-top:8px;font-size:0.85em;color:#888;">
           ${walletNote}${airdropNote}<br/>
           Liquidity is a separate step you drive yourself, with your own wallet, on Raydium's own site.
         </div>
+        ${metadataNoteHtml}
       `;
     } catch (err) {
       errorBox.style.display = "block";

@@ -16,6 +16,12 @@ export function expandHome(p) {
   return p.startsWith("~") ? path.join(os.homedir(), p.slice(1)) : p;
 }
 
+/** Path for a fresh, dedicated wallet for one coin — never collides, never reused. */
+export function newWalletPath(symbol, walletsDir) {
+  const slug = (symbol || "coin").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12) || "COIN";
+  return path.join(walletsDir, `${slug}-${Date.now()}.json`);
+}
+
 /** Load an existing keypair, or generate + save a new one if the file doesn't exist yet. */
 export function loadOrCreateKeypair(keypairPath) {
   const resolved = expandHome(keypairPath || DEFAULT_KEYPAIR_PATH);

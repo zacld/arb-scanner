@@ -24,3 +24,5 @@ coinlauncher/*.log
 coinlauncher/keypair*.json
 coinlauncher/*-keypair.json
 coinlauncher/.env
+coinlauncher/wallets/
+coinlauncher/uploads/
