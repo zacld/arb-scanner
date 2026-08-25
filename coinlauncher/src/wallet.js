@@ -60,28 +60,41 @@ export async function requestDevnetAirdrop(publicKey, amountSol = 2) {
  * its balance is below `minSol`. Never touches mainnet balances — real SOL
  * has to come from you, on purpose.
  *
- * The public devnet faucet is shared across everyone using it and gets
- * rate-limited (HTTP 429) fairly often — that's not a bug in this tool, it's
- * upstream. If the automatic airdrop fails, we surface a clear next step
- * instead of a raw RPC error.
+ * The public devnet faucet is shared across everyone using it and fails
+ * often, for more reasons than just rate-limiting -- HTTP 429 ("too many
+ * requests"), but also plain "Internal error" from the faucet itself
+ * (drained, temporarily down, flaky). None of that is a bug in this tool.
+ * A short retry covers the common transient case; if it's still failing
+ * after that, surface a clear manual fallback instead of a raw RPC error.
  */
 export async function ensureFundedDevnetWallet(keypairPath, minSol = 0.05) {
   const { keypair, path: resolved, created } = loadOrCreateKeypair(keypairPath);
   let balance = await getBalanceSol(keypair.publicKey, "devnet");
   let airdropped = false;
   if (balance < minSol) {
-    try {
-      balance = await requestDevnetAirdrop(keypair.publicKey, 2);
-      airdropped = true;
-    } catch (err) {
+    const attempts = 3;
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        balance = await requestDevnetAirdrop(keypair.publicKey, 2);
+        airdropped = true;
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts - 1) await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+      }
+    }
+    if (lastErr) {
       const address = keypair.publicKey.toBase58();
       throw new Error(
-        `Automatic devnet airdrop failed (the public faucet is rate-limited — ` +
-        `this is a Solana-wide limit, not specific to this tool). ` +
+        `Automatic devnet airdrop failed after ${attempts} attempts (the public devnet faucet is shared ` +
+        `across everyone using it and fails often -- rate limits, or just its own "Internal error" -- ` +
+        `this is a Solana-wide issue, not specific to this tool). ` +
         `Get free test SOL manually: open https://faucet.solana.com, paste in ` +
         `wallet address ${address}, request SOL there, then click Launch again ` +
         `— it'll skip the airdrop once the balance is enough. ` +
-        `(Underlying error: ${err.message || err})`
+        `(Underlying error: ${lastErr.message || lastErr})`
       );
     }
   }
