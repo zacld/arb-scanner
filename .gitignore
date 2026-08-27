@@ -17,14 +17,3 @@ arbfinder-jobs.db
 debug_*.html
 .venv/
 __pycache__/
-
-# coinlauncher (Node subproject) — never commit keys or deps
-coinlauncher/node_modules/
-coinlauncher/*.log
-coinlauncher/keypair*.json
-coinlauncher/*-keypair.json
-coinlauncher/.env
-coinlauncher/wallets/
-coinlauncher/uploads/
-coinlauncher/data/
-coinlauncher/secrets/
