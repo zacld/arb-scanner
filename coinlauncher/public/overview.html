@@ -100,6 +100,18 @@
         </section>
 
         <section>
+          <h2>Complete Launch <span style="font-size:0.8rem;color:#888;">(funding swap → forward → distribution, one click)</span></h2>
+          <div style="font-size:0.85rem;color:#888;">
+            Runs the same three hardened operations as the individual buttons on the Liquidity page and below,
+            in sequence. Stops cleanly and tells you exactly where it got to if any step isn't ready or fails —
+            never cascades past a step that didn't actually confirm. Mainnet only; requires SOL already in the
+            Funding wallet and a live route.
+          </div>
+          <button id="completeLaunchBtn" style="margin-top:8px;">Run complete launch</button>
+          <div id="completeLaunchMsg"></div>
+        </section>
+
+        <section>
           <h2>Wallets <a href="console.html?project=${currentProjectId}" style="font-size:0.8rem;float:right;">Manage →</a></h2>
           <div class="grid" id="walletCards"></div>
         </section>
@@ -124,6 +136,29 @@
       walletCards.innerHTML = wallets
         .map((w) => `<div class="card"><div class="label">${ROLE_LABEL[w.role] || w.role} — ${w.label}</div><div class="value"><code>${w.address.slice(0, 4)}…${w.address.slice(-4)}</code></div></div>`)
         .join("") || `<div class="empty">No wallets yet.</div>`;
+
+      document.getElementById("completeLaunchBtn").addEventListener("click", async () => {
+        const btn = document.getElementById("completeLaunchBtn");
+        const msg = document.getElementById("completeLaunchMsg");
+        btn.disabled = true;
+        msg.innerHTML = "Running…";
+        try {
+          const result = await api(`/api/projects/${currentProjectId}/complete-launch`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+          });
+          const lines = result.steps.map((s) => {
+            const label = { funding_swap: "Funding swap", funding_forward: "Forward to Main Holding", distribution: "Distribution" }[s.step] || s.step;
+            if (s.ok) return `✅ ${label}${s.signature ? " (" + s.signature.slice(0, 10) + "…)" : ""}`;
+            return `❌ ${label}: ${s.error || s.status || "did not complete"}`;
+          }).join("<br/>");
+          msg.innerHTML = `<div class="msg ${result.complete ? "ok" : "err"}">${result.complete ? "✅ Complete." : `⚠️ Stopped at: ${result.stoppedAt}`}<br/>${lines}</div>`;
+          render();
+        } catch (err) {
+          msg.innerHTML = `<div class="msg err">❌ ${err.message}</div>`;
+        } finally {
+          btn.disabled = false;
+        }
+      });
 
       const ladder = document.getElementById("ladder");
       ladder.innerHTML = stateData.states

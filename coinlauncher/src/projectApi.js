@@ -8,6 +8,7 @@ import * as store from "./db/store.js";
 import { refreshState, STATES, verifyAndRecordPool } from "./stateMachine.js";
 import { runDistribution, DistributionError } from "./distributionService.js";
 import { runFundingSwap, runFundingForward, FundingSwapError } from "./fundingSwapService.js";
+import { runFullLaunchSequence } from "./launchOrchestrator.js";
 
 export function projectApiRouter(root) {
   const router = express.Router();
@@ -122,6 +123,21 @@ export function projectApiRouter(root) {
     } catch (err) {
       const status = err instanceof FundingSwapError ? 400 : 500;
       res.status(status).json({ error: err.message || String(err) });
+    }
+  });
+
+  router.post("/:projectId/complete-launch", async (req, res) => {
+    const project = getProjectOr404(req, res);
+    if (!project) return;
+    const { swapPercent, slippageBps, allocations, force } = req.body || {};
+    try {
+      const result = await runFullLaunchSequence(root, project.id, { swapPercent, slippageBps, allocations, force: !!force });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      // runFullLaunchSequence itself catches per-step errors and returns
+      // them in `steps` -- reaching here means something outside those
+      // three operations broke (e.g. the project lookup itself).
+      res.status(500).json({ error: err.message || String(err) });
     }
   });
 

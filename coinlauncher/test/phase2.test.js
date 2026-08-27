@@ -15,6 +15,7 @@ const TEST_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "coinlauncher-phase2-tes
 const store = await import("../src/db/store.js");
 const { runFundingSwap, runFundingForward, FundingSwapError } = await import("../src/fundingSwapService.js");
 const { computeMilestones } = await import("../src/stateMachine.js");
+const { runFullLaunchSequence } = await import("../src/launchOrchestrator.js");
 
 test.after(() => {
   fs.rmSync(TEST_ROOT, { recursive: true, force: true });
@@ -94,4 +95,19 @@ test("runFundingForward: rejects before any chain call when preconditions aren't
 
   store.addWallet(TEST_ROOT, { projectId: p1, role: "funding", label: "Funding", address: "FundingAddrF3", keypairPath: "/tmp/f3.json" });
   await assert.rejects(() => runFundingForward(TEST_ROOT, p1), FundingSwapError); // no main_holding wallet
+});
+
+test("runFullLaunchSequence: stops cleanly at the first step that isn't ready, never cascades", async () => {
+  // A project with no funding wallet at all -- runFundingSwap throws
+  // immediately. The sequence must report that and stop, not attempt
+  // forward or distribution afterward.
+  const p1 = store.createProject(TEST_ROOT, { name: "O1", symbol: "OR1", network: "mainnet-beta" });
+  store.updateProjectMint(TEST_ROOT, p1, { mintAddress: "MintAddrO1", decimals: 6, supply: "1000000000", metadataUri: "" });
+
+  const result = await runFullLaunchSequence(TEST_ROOT, p1);
+  assert.equal(result.complete, false);
+  assert.equal(result.stoppedAt, "funding_swap");
+  assert.equal(result.steps.length, 1); // never attempted funding_forward or distribution
+  assert.equal(result.steps[0].step, "funding_swap");
+  assert.equal(result.steps[0].ok, false);
 });
