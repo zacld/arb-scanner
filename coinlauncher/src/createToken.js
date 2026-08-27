@@ -15,7 +15,7 @@ import {
   createSignerFromKeypair,
   transactionBuilder,
 } from "@metaplex-foundation/umi";
-import { createFungible, mintV1, TokenStandard } from "@metaplex-foundation/mpl-token-metadata";
+import { createFungible, mintV1, TokenStandard, mplTokenMetadata } from "@metaplex-foundation/mpl-token-metadata";
 import {
   fromWeb3JsKeypair,
   toWeb3JsPublicKey,
@@ -69,6 +69,11 @@ export async function launchToken({
   const owner = loadOwnerKeypair(keypairPath);
 
   const umi = createUmi(rpcUrl);
+  // Registers the Token Metadata program AND (via mplToolbox, which this
+  // pulls in internally) the SPL Token / Associated Token programs that
+  // createFungible/mintV1 reference by name. Without this, Umi has no idea
+  // what "splAssociatedToken" even refers to on this cluster.
+  umi.use(mplTokenMetadata());
   const umiOwnerKeypair = fromWeb3JsKeypair(owner);
   const ownerSigner = createSignerFromKeypair(umi, umiOwnerKeypair);
   umi.use(umiKeypairIdentity(ownerSigner));
