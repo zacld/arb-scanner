@@ -6,43 +6,253 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root { color-scheme: light dark; }
-  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 16px; }
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; }
   h1 { font-size: 1.3rem; margin-bottom: 0; }
   .sub { color: #888; margin-top: 4px; margin-bottom: 16px; }
+  select, input, textarea { padding: 8px; border-radius: 6px; border: 1px solid #8886; background: transparent; color: inherit; font-family: inherit; }
+  textarea { width: 100%; box-sizing: border-box; font-family: inherit; resize: vertical; }
   section { border: 1px solid #8883; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
   section h2 { font-size: 1rem; margin: 0 0 10px 0; }
-  .status { padding: 10px 12px; border-radius: 8px; background: #8881; color: #888; font-size: 0.9rem; }
+  .status { padding: 10px 12px; border-radius: 8px; font-size: 0.9rem; }
+  .status.ok { background: #2ecc7122; border: 1px solid #2ecc71; }
+  .status.unavailable { background: #8881; color: #888; }
+  form.inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-top: 8px; }
+  form.inline > div { display: flex; flex-direction: column; gap: 4px; }
+  form.inline label { font-size: 0.8rem; color: #888; }
+  form.stack > div { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  form.stack label { font-size: 0.8rem; color: #888; }
+  button { padding: 8px 14px; border-radius: 6px; border: none; background: #6c5ce7; color: white; font-weight: 600; cursor: pointer; font-size: 0.85rem; }
+  button.ghost { background: transparent; border: 1px solid #8886; color: inherit; }
+  button.danger { background: #e74040; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .msg { margin-top: 10px; padding: 10px; border-radius: 6px; font-size: 0.85em; word-break: break-all; }
+  .msg.ok { background: #2ecc7122; border: 1px solid #2ecc71; }
+  .msg.err { background: #e7404022; border: 1px solid #e74040; }
+  .empty { color: #888; text-align: center; padding: 40px 0; }
+  .post { border: 1px solid #8883; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+  .post .meta { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 0.78rem; color: #888; }
+  .pill { font-size: 0.68rem; padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .pill.draft { background: #f39c1222; color: #f39c12; }
+  .pill.approved { background: #3498db22; color: #3498db; }
+  .pill.published { background: #2ecc7122; color: #2ecc71; }
+  .post .actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  code { font-size: 0.85em; word-break: break-all; }
 </style>
 </head>
 <body>
   <script src="nav.js"></script>
   <h1>📣 Socials</h1>
-  <div class="sub">X/Twitter connection and launch content — not built in Phase 1.</div>
+  <div class="sub">Draft, approve, then publish — every post goes through both steps, nothing auto-posts.</div>
 
-  <section>
-    <h2>X Account</h2>
-    <div class="status">Not Connected</div>
-  </section>
+  <div><select id="projectSelect"></select></div>
+  <div id="app"></div>
 
-  <section>
-    <h2>What this requires before any of it can work</h2>
-    <div>
-      You create/verify a real X account yourself, then connect it here via X's own OAuth flow with credentials
-      from your own X developer app. This tool will never automate account creation or work around CAPTCHA/
-      email/phone verification — that's a platform-ToS violation and reads as manufactured legitimacy, not
-      something built here at any phase.
-    </div>
-  </section>
+<script>
+  const params = new URLSearchParams(location.search);
+  let currentProjectId = params.get("project") || null;
 
-  <section>
-    <h2>Planned once connected (Phase 4)</h2>
-    <div>
-      Generate → approve → publish, kept as separate steps throughout. Structured content (announcements, FAQ,
-      pinned post) built from real project data — mint address, real state-machine events — never promising
-      returns, fabricating holders/volume/liquidity, inventing partnerships, or presenting operator wallets as
-      independent investors. Initially approval-required before anything posts; auto-post only ever added for
-      factual, verifiable events.
-    </div>
-  </section>
+  async function api(path, opts) {
+    const res = await fetch(path, opts);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  async function loadProjects() {
+    const { projects } = await api("/api/projects");
+    const select = document.getElementById("projectSelect");
+    if (projects.length === 0) {
+      document.getElementById("app").innerHTML = `<div class="empty">No coins launched yet. <a href="index.html">Launch one →</a></div>`;
+      select.style.display = "none";
+      return;
+    }
+    select.style.display = "";
+    select.innerHTML = projects.map((p) => `<option value="${p.id}">${p.name} (${p.symbol}) — ${p.network}</option>`).join("");
+    if (!currentProjectId || !projects.find((p) => p.id === currentProjectId)) currentProjectId = projects[0].id;
+    select.value = currentProjectId;
+    select.addEventListener("change", () => { currentProjectId = select.value; render(); });
+    await render();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  async function render() {
+    const app = document.getElementById("app");
+    app.innerHTML = `<div class="empty">Loading…</div>`;
+    try {
+      const [{ project }, credStatus, { templates }, { posts }] = await Promise.all([
+        api(`/api/projects/${currentProjectId}`),
+        api(`/api/projects/${currentProjectId}/social/credentials`),
+        api(`/api/projects/${currentProjectId}/social/templates`),
+        api(`/api/projects/${currentProjectId}/social/posts`),
+      ]);
+
+      app.innerHTML = `
+        <section>
+          <h2>X account</h2>
+          <div class="status ${credStatus.configured ? "ok" : "unavailable"}">
+            ${credStatus.configured
+              ? `✅ Credentials saved (key ${credStatus.apiKeyPreview}, saved ${new Date(credStatus.savedAt).toLocaleString()})`
+              : "Not connected."}
+          </div>
+          <div style="margin-top:8px;font-size:0.8rem;color:#888;">
+            You create/verify a real X account yourself, then create a developer app at
+            <a href="https://developer.x.com" target="_blank" rel="noopener">developer.x.com</a> with read/write
+            access and generate an API key/secret + access token/secret there. Paste them below — they're saved
+            to a file on this machine only (never in the database, never sent anywhere except X's own API when you
+            publish). This tool never creates the account, runs its own OAuth flow, or works around
+            CAPTCHA/email/phone verification.
+          </div>
+          <form class="stack" id="credForm" style="margin-top:10px;max-width:420px;">
+            <div><label>API key</label><input name="apiKey" type="password" autocomplete="off" required /></div>
+            <div><label>API secret</label><input name="apiSecret" type="password" autocomplete="off" required /></div>
+            <div><label>Access token</label><input name="accessToken" type="password" autocomplete="off" required /></div>
+            <div><label>Access token secret</label><input name="accessTokenSecret" type="password" autocomplete="off" required /></div>
+            <div style="flex-direction:row;gap:8px;">
+              <button type="submit">${credStatus.configured ? "Update credentials" : "Save credentials"}</button>
+              ${credStatus.configured ? `<button type="button" class="ghost" id="clearCredsBtn">Remove</button>` : ""}
+            </div>
+          </form>
+          <div id="credMsg"></div>
+        </section>
+
+        <section>
+          <h2>Generate a draft</h2>
+          <div style="font-size:0.85rem;color:#888;">
+            Built only from this project's real, already-recorded data — mint address, verified pool, supply.
+            No holder counts, volume, or price claims (this tool doesn't track those), no promised returns, no
+            invented partnerships. Edit freely before approving.
+          </div>
+          <form class="inline" id="genForm">
+            <div>
+              <label>Template</label>
+              <select name="template">
+                ${templates.map((t) => `<option value="${t.id}">${t.label}</option>`).join("")}
+              </select>
+            </div>
+            <button type="submit">Generate draft</button>
+          </form>
+          <div id="genMsg"></div>
+        </section>
+
+        <section>
+          <h2>Posts</h2>
+          <div id="postsBox"></div>
+        </section>
+      `;
+
+      document.getElementById("credForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById("credMsg");
+        const fd = new FormData(e.target);
+        msg.innerHTML = "Saving…";
+        try {
+          await api(`/api/projects/${currentProjectId}/social/credentials`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              apiKey: fd.get("apiKey"), apiSecret: fd.get("apiSecret"),
+              accessToken: fd.get("accessToken"), accessTokenSecret: fd.get("accessTokenSecret"),
+            }),
+          });
+          render();
+        } catch (err) {
+          msg.innerHTML = `<div class="msg err">❌ ${escapeHtml(err.message)}</div>`;
+        }
+      });
+
+      const clearBtn = document.getElementById("clearCredsBtn");
+      if (clearBtn) clearBtn.addEventListener("click", async () => {
+        if (!confirm("Remove saved X credentials for this project?")) return;
+        try {
+          await api(`/api/projects/${currentProjectId}/social/credentials`, { method: "DELETE" });
+          render();
+        } catch (err) {
+          document.getElementById("credMsg").innerHTML = `<div class="msg err">❌ ${escapeHtml(err.message)}</div>`;
+        }
+      });
+
+      document.getElementById("genForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById("genMsg");
+        const fd = new FormData(e.target);
+        msg.innerHTML = "Generating…";
+        try {
+          await api(`/api/projects/${currentProjectId}/social/posts/generate`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ template: fd.get("template") }),
+          });
+          msg.innerHTML = "";
+          render();
+        } catch (err) {
+          msg.innerHTML = `<div class="msg err">❌ ${escapeHtml(err.message)}</div>`;
+        }
+      });
+
+      const postsBox = document.getElementById("postsBox");
+      if (posts.length === 0) {
+        postsBox.innerHTML = `<div class="empty">No drafts yet — generate one above.</div>`;
+      } else {
+        postsBox.innerHTML = posts.map((p) => `
+          <div class="post" data-id="${p.id}">
+            <div class="meta">
+              <span class="pill ${p.status}">${p.status}</span>
+              <span>${new Date(p.updated_at).toLocaleString()}</span>
+              ${p.template ? `<span>· ${p.template}</span>` : ""}
+            </div>
+            <textarea rows="4" data-role="content" ${p.status === "published" ? "disabled" : ""}>${escapeHtml(p.content)}</textarea>
+            ${p.status === "published" && p.remote_url ? `<div style="margin-top:6px;font-size:0.8rem;"><a href="${p.remote_url}" target="_blank" rel="noopener">View on X →</a></div>` : ""}
+            ${p.error ? `<div class="msg err">❌ ${escapeHtml(p.error)}</div>` : ""}
+            <div class="actions">
+              ${p.status === "draft" ? `<button data-action="save">Save edit</button><button data-action="approve">Approve</button><button class="danger" data-action="delete">Delete</button>` : ""}
+              ${p.status === "approved" ? `<button data-action="publish">Publish to X</button><button class="ghost" data-action="unapprove">Back to draft</button><button class="danger" data-action="delete">Delete</button>` : ""}
+            </div>
+            <div class="msg" data-role="postMsg"></div>
+          </div>
+        `).join("");
+
+        postsBox.querySelectorAll(".post").forEach((el) => {
+          const postId = el.dataset.id;
+          const textarea = el.querySelector("[data-role=content]");
+          const postMsg = el.querySelector("[data-role=postMsg]");
+          const run = async (fn) => {
+            try { await fn(); render(); }
+            catch (err) { postMsg.innerHTML = `<div class="msg err">❌ ${escapeHtml(err.message)}</div>`; }
+          };
+          el.querySelectorAll("button[data-action]").forEach((btn) => {
+            btn.addEventListener("click", async () => {
+              const action = btn.dataset.action;
+              btn.disabled = true;
+              if (action === "save") {
+                await run(() => api(`/api/projects/${currentProjectId}/social/posts/${postId}`, {
+                  method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: textarea.value }),
+                }));
+              } else if (action === "approve") {
+                await run(() => api(`/api/projects/${currentProjectId}/social/posts/${postId}/approve`, { method: "POST" }));
+              } else if (action === "unapprove") {
+                await run(() => api(`/api/projects/${currentProjectId}/social/posts/${postId}/unapprove`, { method: "POST" }));
+              } else if (action === "publish") {
+                if (!confirm("Publish this exact text to X now? This posts for real.")) { btn.disabled = false; return; }
+                postMsg.innerHTML = "Publishing…";
+                await run(() => api(`/api/projects/${currentProjectId}/social/posts/${postId}/publish`, { method: "POST" }));
+              } else if (action === "delete") {
+                if (!confirm("Delete this draft?")) { btn.disabled = false; return; }
+                await run(() => api(`/api/projects/${currentProjectId}/social/posts/${postId}`, { method: "DELETE" }));
+              }
+              btn.disabled = false;
+            });
+          });
+        });
+      }
+    } catch (err) {
+      app.innerHTML = `<div class="status unavailable">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  loadProjects().catch((err) => {
+    document.getElementById("app").innerHTML = `<div class="status unavailable">${escapeHtml(err.message)}</div>`;
+  });
+</script>
 </body>
 </html>

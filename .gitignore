@@ -27,3 +27,4 @@ coinlauncher/.env
 coinlauncher/wallets/
 coinlauncher/uploads/
 coinlauncher/data/
+coinlauncher/secrets/

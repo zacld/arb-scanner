@@ -104,11 +104,34 @@ function migrate(db) {
       created_at TEXT NOT NULL
     );
 
+    -- Marketing/socials drafts. Deliberately holds nothing sensitive (no API
+    -- keys/tokens -- those live in a chmod-600 file per project, same
+    -- pattern as wallet keypairs, see socialsCredentials.js) and nothing
+    -- fabricated -- content is generated only from real project/state data.
+    -- Every row is born 'draft' and can only reach 'published' by passing
+    -- through 'approved' first; nothing here auto-posts.
+    CREATE TABLE IF NOT EXISTS social_posts (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id),
+      platform TEXT NOT NULL DEFAULT 'twitter',
+      template TEXT,                 -- which generator built the first draft, if any ('custom' if hand-written)
+      content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft', -- draft | approved | published | failed
+      remote_post_id TEXT,           -- tweet id, once published
+      remote_url TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      approved_at TEXT,
+      published_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_wallets_project ON wallets(project_id);
     CREATE INDEX IF NOT EXISTS idx_tx_project ON transactions(project_id);
     CREATE INDEX IF NOT EXISTS idx_tx_operation ON transactions(operation_id);
     CREATE INDEX IF NOT EXISTS idx_tx_wallet_status ON transactions(wallet_id, status);
     CREATE INDEX IF NOT EXISTS idx_ops_project ON operations(project_id);
+    CREATE INDEX IF NOT EXISTS idx_social_posts_project ON social_posts(project_id);
   `);
 
   // Safe migrations for DBs created before these columns existed. Nothing

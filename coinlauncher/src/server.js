@@ -27,6 +27,7 @@ import {
 import { buildAndUploadMetadata } from "./metadata.js";
 import { consoleApiRouter } from "./consoleApi.js";
 import { projectApiRouter } from "./projectApi.js";
+import { socialsApiRouter } from "./socialsApi.js";
 import * as store from "./db/store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +45,7 @@ app.use(express.json());
 app.use(express.static(path.join(ROOT, "public")));
 app.use("/api/console", consoleApiRouter(ROOT));
 app.use("/api/projects", projectApiRouter(ROOT));
+app.use("/api/projects/:projectId/social", socialsApiRouter(ROOT));
 
 const MAINNET_CONFIRM_PHRASE = "LAUNCH MAINNET";
 const MIN_MAINNET_SOL = ESTIMATED_LAUNCH_COST_SOL;

@@ -198,3 +198,52 @@ export function getTransactionsByOperation(root, operationId) {
   const db = getDb(root);
   return db.prepare(`SELECT * FROM transactions WHERE operation_id = ? ORDER BY id ASC`).all(operationId);
 }
+
+// ---- social posts (marketing drafts) ----
+
+export function createSocialPost(root, { projectId, platform = "twitter", template, content }) {
+  const db = getDb(root);
+  const id = newId("post");
+  const ts = now();
+  db.prepare(
+    `INSERT INTO social_posts (id, project_id, platform, template, content, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)`
+  ).run(id, projectId, platform, template || "custom", content, ts, ts);
+  return id;
+}
+
+export function getSocialPost(root, postId) {
+  const db = getDb(root);
+  return db.prepare(`SELECT * FROM social_posts WHERE id = ?`).get(postId) || null;
+}
+
+export function listSocialPosts(root, projectId) {
+  const db = getDb(root);
+  return db.prepare(`SELECT * FROM social_posts WHERE project_id = ? ORDER BY created_at DESC`).all(projectId);
+}
+
+export function updateSocialPostContent(root, postId, content) {
+  const db = getDb(root);
+  db.prepare(`UPDATE social_posts SET content = ?, updated_at = ? WHERE id = ?`).run(content, now(), postId);
+}
+
+export function setSocialPostStatus(root, postId, status, extra = {}) {
+  const db = getDb(root);
+  const ts = now();
+  db.prepare(
+    `UPDATE social_posts SET
+       status = ?,
+       updated_at = ?,
+       approved_at = CASE WHEN ? = 'approved' THEN ? ELSE approved_at END,
+       published_at = CASE WHEN ? = 'published' THEN ? ELSE published_at END,
+       remote_post_id = COALESCE(?, remote_post_id),
+       remote_url = COALESCE(?, remote_url),
+       error = ?
+     WHERE id = ?`
+  ).run(status, ts, status, ts, status, ts, extra.remotePostId || null, extra.remoteUrl || null, extra.error || null, postId);
+}
+
+export function deleteSocialPost(root, postId) {
+  const db = getDb(root);
+  db.prepare(`DELETE FROM social_posts WHERE id = ?`).run(postId);
+}

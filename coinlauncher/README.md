@@ -146,6 +146,54 @@ ladder, explained honestly) but not implemented — that's the real
 market-swap/liquidity integration, which is Phase 2, and this build never
 fakes it.
 
+## Socials: generate → approve → publish
+
+The launch/liquidity/wallet side above is the whole automated pipeline —
+mint, three-tier wallets, real swap, real distribution, one-click orchestration.
+This section is the marketing layer on top of it: draft content grounded in
+what actually happened on-chain, reviewed by a person, then published.
+
+**Nothing here creates or logs into an X account for you.** You make (or
+already have) a real X account and a developer app at developer.x.com
+yourself, generate a read/write API key + secret and access token + secret
+there, and paste them into the Socials page. There is no OAuth flow run by
+this tool, no CAPTCHA/email/phone-verification bypass, and no path by which
+this tool could create an account on your behalf — all explicitly out of
+scope from the original spec, not just an oversight.
+
+**Credential storage matches the private-key pattern, not the DB pattern**:
+saved to `secrets/social/<projectId>.json`, chmod 600, gitignored, never
+written into SQLite and never echoed back — the API only ever returns a
+masked preview (`credentialsStatus` in `socialsCredentials.js`). Deleting a
+project's credentials removes the file.
+
+**Content generation** (`socialsService.js`) is template-based, not an LLM
+call, and every template is built only from data this tool already verified
+for itself — mint address, fixed supply, a pool address that passed
+`verifyPoolAddress`. There is no template for holder count, volume, or price
+(nothing here tracks those, so nothing here can claim them), no
+promised-returns language, no invented partnerships or endorsements, and
+operator wallets are never described as independent holders. `custom` is a
+blank draft for anything the templates don't cover — it still goes through
+the same approve/publish gate as a generated one.
+
+**The status machine is linear and one-directional past publish**: every
+post is born `draft`, can be edited freely while `draft`, must be explicitly
+`approve`d before `publish` is even reachable (the API rejects
+publish-from-draft outright), and `approved` can still be sent back to
+`draft` or deleted — but a `published` post can't be edited or deleted, only
+viewed, since it's already real and public. A failed publish attempt (bad
+credentials, X API error) reverts the post to `approved` with the error
+attached, not stuck in limbo and not silently retried.
+
+**Posting itself** is a single signed `POST /2/tweets` call, OAuth 1.0a
+user-context, implemented directly against X's HTTP API (`buildOauthHeader`
+in `socialsService.js`) rather than pulling in an SDK for one endpoint.
+Verified against the real API during development — deliberately-wrong test
+credentials produced a genuine `403` back from `api.twitter.com`, confirming
+the request actually reaches X and errors are surfaced rather than a network
+exception crashing the request.
+
 ## Setup
 
 ```bash
